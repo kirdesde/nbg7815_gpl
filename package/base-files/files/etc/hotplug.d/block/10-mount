@@ -1,0 +1,60 @@
+#!/bin/sh 
+# Copyright (C) 2009 OpenWrt.org
+
+. /bin/define-usb-slot "$DEVPATH"
+
+dev_node=`basename $DEVPATH`
+
+# sanity check
+
+is_usb_storage=$(echo $DEVPATH | grep block | grep usb)
+
+# only take care of usb storage
+if [ "$is_usb_storage" == "" ]; then
+	exit
+fi
+
+# skip sd[a-z] if there is a partition table in the usb storage 
+if [ "$(echo $DEVPATH | awk -F"/" '{print $(NF-1)}')" == "block" ]; then
+	if fdisk -l "/dev/$dev_node" | grep -q "^/dev/${dev_node}[0-9]"; then
+		exit
+	fi
+fi
+
+check_mount_state() {
+	/bin/usb-app "stop"
+	mount_state=$(mount |grep "/dev/sd" |awk -F " " '{print $1}')
+	ls_state=$(ls /dev/sd*[0-9])
+	flag=0
+
+	for mount_dev in $mount_state
+	do
+		for ls_dev in $ls_state
+		do
+			if [ "$mount_dev" == "$ls_dev" ];then
+				flag=1
+			fi
+		done
+	
+		if [ "$flag" == 0 ];then
+			umount_path=$(mount |grep "$mount_dev" |awk -F " " '{print $3}')
+			umount $umount_path
+		else
+			flag=0
+		fi
+	done
+}
+
+case "$ACTION" in
+	add)
+		check_mount_state
+		/bin/mount_usb "$USB_SLOT" "$USB_NODE" "$dev_node"
+		/sbin/dlna_gen_folder.sh
+		/etc/init.d/samba restart
+	;;
+	remove)
+		/etc/init.d/samba stop	
+		/bin/umount_usb "$USB_SLOT" "$USB_NODE" "$dev_node"
+	;;
+esac	
+

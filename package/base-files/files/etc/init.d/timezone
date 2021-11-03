@@ -1,0 +1,18 @@
+#!/bin/sh /etc/rc.common
+
+START=97
+
+boot() {
+	/sbin/timezone_sync boot & # sleep random time avoid ddos service when power outages occurred in region
+	sed -i -e "/timezone_sync/d" /etc/crontabs/root
+	printf "%02d %02d * * * /sbin/timezone_sync start\n" $((0x$(openssl rand -hex 4)%60)) $((0x$(openssl rand -hex 4)%24)) > /etc/crontabs/root
+	/etc/init.d/cron restart
+}
+
+start() {
+	/sbin/timezone_sync start
+}
+
+reload() {
+	/sbin/timezone_sync reload
+}

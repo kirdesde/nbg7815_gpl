@@ -1,0 +1,32 @@
+#!/bin/sh
+
+wget_check_internet() {
+	echo "$1"
+	wget -q --spider "$1"
+	if [ $? -eq 0 ]; then
+		#echo "wget result: Online"
+		touch /tmp/check_internet_ok_wget
+	else
+		#echo "wget result: Offline"
+		rm /tmp/check_internet_ok_wget
+	fi
+}
+
+nslookup_check_internet() {
+	echo "$1" "$2"
+	nslookup "$1" "$2"
+	if [ $? -eq 0 ]; then
+		#echo "nslookup result: Online"
+		touch /tmp/check_internet_ok_nslookup
+	else
+		#echo "nslookup result: Offline"
+		rm /tmp/check_internet_ok_nslookup
+	fi
+}
+
+
+
+case "$1" in
+	wget) wget_check_internet "$2";;
+	nslookup) nslookup_check_internet "$2" "$3";;
+esac

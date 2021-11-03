@@ -1,0 +1,189 @@
+#!/bin/sh
+
+rm -rf /tmp/wps_cancel
+rm -rf /tmp/wps_state
+
+echo > /tmp/wps_log
+
+wifi_24G_main_intf="ath0"
+wifi_5G_main_intf="ath10"
+
+run_wps() {
+	local intf=$1
+	local device
+
+	device=$(uci get wireless.$intf.device)
+	hostapd_cli -i $intf -p /var/run/hostapd-$device wps_pbc
+}
+
+cancel_wps() {
+	local intf=$1
+
+	device=$(uci get wireless.$intf.device)
+	hostapd_cli -i $intf -p /var/run/hostapd-$device wps_cancel
+
+	zyxel_led_ctrl WPSFinish
+}
+
+wps_running() {
+	echo "WPSrunning" > /tmp/wps_state
+	zyxel_led_ctrl WPSStart
+}
+
+wps_success() {
+	echo "WPSsuccess" > /tmp/wps_state
+	zyxel_led_ctrl WPSFinish
+}
+
+wps_timeout() {
+	echo "WPStimeout" > /tmp/wps_state
+	zyxel_led_ctrl WPSFinish
+}
+
+# Return value:
+# 3: wps overlap
+# 2: wps time-out
+# 1: wps running
+# 0: wps success 
+chk_wps_status() {
+	local intf=$1
+	local device
+	local pbc_status
+	local last_status
+
+	device=$(uci get wireless.$intf.device)
+
+	hostapd_cli -i $intf -p /var/run/hostapd-$device wps_get_status > /tmp/wps_status
+	pbc_status=$(cat /tmp/wps_status | grep PBC)
+	last_status=$(cat /tmp/wps_status | grep Last)
+
+	if [ "$pbc_status" == "PBC Status: Active" ]; then
+		echo "$intf WPS is running" >> /tmp/wps_log
+		return 1
+	elif [ "$pbc_status" == "PBC Status: Disabled" ]; then
+		if [ "$last_status" == "Last WPS result: Success" ]; then
+			echo "$intf WPS success" >> /tmp/wps_log
+			return 0
+		fi
+	elif [ "$pbc_status" == "PBC Status: Overlap" ]; then
+		echo "$intf WPS Overlap" >> /tmp/wps_log
+		return 3
+	fi
+
+	return 2
+}
+
+run_wps_intf() {
+	local wpstime=0
+	local intf=$1
+	local wps_status=""
+
+	while true; do
+		if [ $wpstime -eq 0 ]; then
+			#echo "WPSrunning" > /tmp/wps_state
+			wps_running
+			run_wps $intf
+		elif [ $wpstime -gt 0 -a $wpstime -le 120 ]; then
+			chk_wps_status $intf
+			wps_status=$?
+
+			if [ $wps_status -eq 0 ]; then
+				#echo "WPSsuccess" > /tmp/wps_state
+				wps_success
+				break
+			fi
+		else
+			#echo "WPStimeout" > /tmp/wps_state
+			wps_timeout
+			break
+		fi
+
+		wpstime=$((wpstime+1))
+		sleep 1
+	done
+}
+
+
+run_wps_all() {
+	local wpstime=0
+	local wps_5g_status=""
+	local wps_24g_status=""
+
+	while true; do
+		if [ -f /tmp/wps_cancel ]; then
+			echo "Cancel WPS"
+
+			cancel_wps $wifi_24G_main_intf
+
+			cancel_wps $wifi_5G_main_intf
+
+			break
+		fi
+
+		if [ $wpstime -eq 0 ]; then
+			#echo "WPSrunning" > /tmp/wps_state
+			wps_running
+			run_wps $wifi_5G_main_intf
+		elif [ $wpstime -lt 30 ]; then
+			chk_wps_status $wifi_5G_main_intf
+			wps_5g_status=$?
+
+			if [ $wps_5g_status -eq 0 ]; then
+				#echo "WPSsuccess" > /tmp/wps_state
+				wps_success
+				break
+			fi
+		elif [ $wpstime -eq 30 ]; then
+			chk_wps_status $wifi_5G_main_intf
+			wps_5g_status=$?
+
+			if [ $wps_5g_status -eq 0 ]; then
+				#echo "WPSsuccess" > /tmp/wps_state
+				wps_success
+				break
+			else
+				run_wps $wifi_24G_main_intf
+			fi
+		elif [ $wpstime -gt 30 -a $wpstime -le 120 ]; then
+			chk_wps_status $wifi_5G_main_intf
+			wps_5g_status=$?
+			if [ $wps_5g_status -eq 0 ]; then
+				#echo "WPSsuccess" > /tmp/wps_state
+				wps_success
+				break
+			fi
+
+			chk_wps_status $wifi_24G_main_intf
+			wps_24g_status=$?
+			if [ $wps_24g_status -eq 0 ]; then
+				#echo "WPSsuccess" > /tmp/wps_state
+				wps_success
+				break
+			fi
+		else
+			#echo "WPStimeout" > /tmp/wps_state
+			wps_timeout
+			break
+		fi
+
+		wpstime=$((wpstime+1))
+
+		sleep 1
+	done
+
+	rm -rf /tmp/wps_cancel
+
+	# Wait 5 seconds to remove for gui get wps state
+	# sleep 5
+	# rm -rf /tmp/wps_state
+}
+
+if [ "$1" == "all" ]; then
+	run_wps_all
+else
+	if [ "$1" == "$wifi_24G_main_intf" ]; then
+		run_wps_intf $wifi_24G_main_intf
+	elif [ "$1" == "$wifi_5G_main_intf" ]; then
+		run_wps_intf $wifi_5G_main_intf
+	fi
+fi

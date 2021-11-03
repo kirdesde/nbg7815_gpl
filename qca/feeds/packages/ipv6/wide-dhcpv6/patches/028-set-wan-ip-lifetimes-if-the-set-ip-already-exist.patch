@@ -1,0 +1,112 @@
+--- a/addrconf.c
++++ b/addrconf.c
+@@ -177,13 +177,19 @@ update_address(ia, addr, dhcpifp, ctlp, 
+ 	sa->addr.pltime = addr->pltime;
+ 	sa->addr.vltime = addr->vltime;
+ 	sa->dhcpif = dhcpifp;
+-	dprintf(LOG_DEBUG, FNAME, "%s an address %s pltime=%lu, vltime=%lu",
++	dprintf(LOG_DEBUG, FNAME, "need to %s an address %s pltime=%lu, vltime=%lu",
+ 	    sacreate ? "create" : "update",
+ 	    in6addr2str(&addr->addr, 0), addr->pltime, addr->vltime);
+ 
++	int addIpResult = 0;
++
+ 	if (sa->addr.vltime != 0 && sacreate)
+-		if (na_ifaddrconf(IFADDRCONF_ADD, sa) < 0)
+-			return (-1);
++	{
++		dprintf(LOG_DEBUG, FNAME, "%s an address %s",
++		    sacreate ? "create" : "update",
++		    in6addr2str(&addr->addr, 0));
++		addIpResult = na_ifaddrconf(IFADDRCONF_ADD, sa);
++	}
+ 
+ 	/*
+ 	 * If the new vltime is 0, this address immediately expires.
+@@ -209,22 +215,19 @@ update_address(ia, addr, dhcpifp, ctlp, 
+ 			}
+ 		}
+ 
+-
+ 		// Set LTs while receiving a renew-reply WAN Global IP.WenHsien.2016.0520.
+ 		int count, set_count;
+ 		struct in6_addr iana_addr[64];
+ 		count = get_tentative_addr(iana_addr);
+ 
+-		if (count == 0) { // no one is in DAD.
++		// Set LTs if no any IP is in DAD, or the received IP is exist but
++		//   dhcp6c do not know that (because it has been restarted) .
++		if (count == 0 || addIpResult < 0) {
++			dprintf(LOG_DEBUG, FNAME, "set pltime=%lu and vltime=%lu on address %s",
++			    addr->pltime, addr->vltime, in6addr2str(&addr->addr, 0));
+ 			set_count = set_plt_vlt_of_wan_ip(dhcpifp);
+ 		}
+ 
+-
+-		/* set vlt plt of WAN Global IP */
+-//		char str[200]="";
+-//		sprintf(str, "ip -6 addr change %s dev %s preferred_lft %lu valid_lft %lu", in6addr2str(&addr.addr, 0), sa->dhcpif->ifname, addr.pltime, addr.vltime);
+-//		system(str);
+-
+ 		/* update the timer */
+ 		timo.tv_sec = sa->addr.vltime;
+ 		timo.tv_usec = 0;
+@@ -234,26 +237,32 @@ update_address(ia, addr, dhcpifp, ctlp, 
+ 	}
+ 
+ #ifdef CLIENT_DECLINE_SUPPORT
+-	ev = sa->dhcpif->current_ev;
+-	if (ev && ev->state == DHCP6S_REQUEST) {
+-		if (ev->dadtimer == NULL) {
+-			ev->dadtimer = dhcp6_add_timer(client6_dad_check, ev);
++
++	if (addIpResult < 0) {
++		return (-1);
++	} else {
++		ev = sa->dhcpif->current_ev;
++		if (ev && ev->state == DHCP6S_REQUEST) {
+ 			if (ev->dadtimer == NULL) {
+-				dprintf(LOG_NOTICE, FNAME,
+-					"failed to add stateful addr dad timer");
+-				remove_addr(sa); /* XXX */
+-				return (-1);
++				dprintf(LOG_DEBUG, FNAME, "wait for DAD, do not set IP lifetimes before that.");
++				ev->dadtimer = dhcp6_add_timer(client6_dad_check, ev);
++				if (ev->dadtimer == NULL) {
++					dprintf(LOG_NOTICE, FNAME,
++						"failed to add stateful addr dad timer");
++					remove_addr(sa); /* XXX */
++					return (-1);
++				}
+ 			}
+-		}
+-		/* update the timer */
+-		timo.tv_sec = 5;
+-		timo.tv_usec = 0;
++			/* update the timer */
++			timo.tv_sec = 5;
++			timo.tv_usec = 0;
+ 
+-		dhcp6_set_timer(&timo, ev->dadtimer);
+-		ev->state = DHCP6S_DECLINE;
++			dhcp6_set_timer(&timo, ev->dadtimer);
++			ev->state = DHCP6S_DECLINE;
+ 
+-		/* Remove "Request" message timer */
+-		dhcp6_remove_timer(&ev->timer);
++			/* Remove "Request" message timer */
++			dhcp6_remove_timer(&ev->timer);
++		}
+ 	}
+ #endif
+ 
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -1111,6 +1111,7 @@ client6_dad_check(arg)
+ 		dhcp6_reset_timer(ev);
+ 	}
+ 	else {
++		dprintf(LOG_DEBUG, FNAME, "pass DAD, then set lifetimes on device WAN IP");
+ 		set_count = set_plt_vlt_of_wan_ip(ifp);
+ 
+ 		/* Pass DAD: restore to request state */

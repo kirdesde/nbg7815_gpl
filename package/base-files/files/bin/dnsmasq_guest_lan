@@ -1,0 +1,102 @@
+#!/bin/sh
+
+stop(){
+	path="/var/run/dnsmasq_guest_lan""$i"".pid"
+	if [ -f $path ];then
+		chk_ath=$(uci get wireless.ath1.disabled)
+		chk_ath5g=$(uci get wireless.ath11.disabled)
+		chk_ath5g2=$(uci get wireless.ath23.disabled)
+
+		if [ $chk_ath == "1" ] && [ $chk_ath5g == "1" ] && [ $chk_ath5g2 == "1" ]; then
+			dnsmasq_pid=$(cat $path)
+			kill $dnsmasq_pid
+			rm $path
+		fi
+
+		##dnsmasq for visitor
+		chk_visitor=$(uci get wireless.ath4.disabled)
+		chk_visitor5g=$(uci get wireless.ath14.disabled)			
+		chk_visitor5g2=$(uci get wireless.ath24.disabled)
+
+		if [ $chk_visitor == "1" ] && [ $chk_visitor5g == "1" ] && [ $chk_visitor5g2 == "1" ]; then
+			dnsmasq_pid=$(cat $path)
+			kill $dnsmasq_pid
+			rm $path
+		fi
+	fi
+}
+
+start(){
+	dev="$2"
+	ipaddr="$3"
+	ipmask="$4"
+
+	dnsmasq_pid=$(ps | grep "dnsmasq -C /tmp/dnsmasq_guest_lan$dev.conf" | grep -v "grep" | awk '{print $1}')
+	if [ -z $dnsmasq_pid ];then
+		local start="10"
+		local end="32"
+		local leasetime="720m"
+		
+		if [ "$dev" == 2 ]; then
+			# Visitor network
+			end="201"
+			leasetime="30m"
+		fi
+		
+		eval "$(ipcalc.sh $ipaddr $ipmask $start $end)"
+		local args="-C /tmp/dnsmasq_guest_lan$dev.conf -z -a $ipaddr -K -F $START,$END,$NETMASK,$leasetime"
+		dnsmasq $args --pid-file="/var/run/dnsmasq_guest_lan$dev.pid"
+	fi
+}
+
+restart(){
+	for i in 1 2
+	do
+		##dnsmasq down
+		path="/var/run/dnsmasq_guest_lan$i.pid"
+		if [ -f $path ];then
+			dnsmasq_pid=$(cat $path)
+			kill $dnsmasq_pid
+			rm $path
+		fi
+	done
+		
+	##dnsmasq up
+	chk_ath=$(uci get wireless.ath1.disabled)
+	chk_ath5g=$(uci get wireless.ath11.disabled)
+	chk_ath5g2=$(uci get wireless.ath23.disabled)
+
+	##dnsmasq for visitor
+	chk_visitor=$(uci get wireless.ath4.disabled)
+	chk_visitor5g=$(uci get wireless.ath14.disabled)
+	chk_visitor5g2=$(uci get wireless.ath24.disabled)
+
+	if [ $chk_ath == "0" ] || [ $chk_ath5g == "0" ] || [ $chk_ath5g2 == "0" ] ; then
+		guest_ipaddr=$(uci get network.guest.ipaddr)
+		guest_ipmask=$(uci get network.guest.netmask)
+
+		start "START" 1 $guest_ipaddr $guest_ipmask
+	fi
+
+	visitor_network_feature=$(wifisys_tool -g 1 -f 2)
+	if [ "$visitor_network_feature" == "2" ]; then
+		if [ "$chk_visitor" == "0" ] || [ "$chk_visitor5g" == "0" ] || [ "$chk_visitor5g2" == "0" ]; then
+			visitor_ipaddr=$(uci get network.visitor.ipaddr)
+			visitor_ipmask=$(uci get network.visitor.netmask)
+
+			start "START" 2 $visitor_ipaddr $visitor_ipmask
+		fi
+	fi
+}
+
+case "$1" in
+	STOP)
+		stop
+	;;
+	START)
+		start "$@"
+	;;
+	RESTART)
+		restart
+	;;
+esac

@@ -1,0 +1,121 @@
+#!/bin/sh
+# Copyright (C) 2006 OpenWrt.org
+
+##check mode,if AP/UR,exit
+sys_mode=$(uci get system.main.system_mode)
+[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] && exit 0
+
+##zyxel_ddns_cli path
+zyxel_ddns_cli=$(command -v zyxel_ddns_cli)
+
+DDNS_host_check() {
+  local host=$(uci get updatedd.general.host)
+
+  rm -f /var/ddns_host_status
+  [ -z "$host" ] && exit 0
+
+  ddns_exist=$(nslookup "$host" |grep "$host" -A 1 |grep Address |cut -d' ' -f3)
+  [ -n "$ddns_exist" ] && echo "The host is existing and IP is $ddns_exist ." > /var/ddns_host_status
+}
+
+update_myzyxelcloud_DDNS() {
+  local host=$(echo "$1" | tr A-Z a-z)
+  local host_first_name=$(echo "$host" | awk -F'.' '{print $1}')
+  local dev_mac=$(atsh | grep "First MAC Address" | awk -F': ' '{print $2}')
+  local dev_serial=$(atsh | grep "Serial Number" | awk -F': ' '{print $2}')
+  rm -f /var/update_myzyxel_ddns_log
+  rm -f /var/update_myzyxel_ddns_status
+
+  [ -x "$zyxel_ddns_cli" ] && $zyxel_ddns_cli -m $dev_mac -s $dev_serial -h $host_first_name -c "set" > /var/update_myzyxel_ddns_log
+  if [ -f /var/update_myzyxel_ddns_log ]; then
+    local code_number=$(cat /var/update_myzyxel_ddns_log | grep -r "code" | awk -F'"' '{print $2}')
+    if [ -n "$code_number" ]; then
+      if [ "$code_number" = "405.1" ] || [ "$code_number" = "405.7" ]; then
+        local update_host=$($zyxel_ddns_cli -m $dev_mac -s $dev_serial -h $host_first_name -c "get" | awk -F'"' '{print $8}')
+        if [ "$host" = "$update_host" ]; then
+          code_number="success"
+        fi
+      fi
+      echo "$code_number" > /var/update_myzyxel_ddns_status
+    else
+      local update_host=$(cat /var/update_myzyxel_ddns_log | awk -F'"' '{print $8}')
+      if [ "$host" = "$update_host" ]; then
+        echo "success" > /var/update_myzyxel_ddns_status
+      else
+        echo "fail" > /var/update_myzyxel_ddns_status
+      fi
+    fi
+  fi
+}
+
+delete_myzyxelcloud_DDNS() {
+  local dev_mac=$(atsh | grep "First MAC Address" | awk -F': ' '{print $2}')
+  local dev_serial=$(atsh | grep "Serial Number" | awk -F': ' '{print $2}')
+  rm -f /var/update_myzyxel_ddns_log
+  rm -f /var/update_myzyxel_ddns_status
+  [ -x "$zyxel_ddns_cli" ] && $zyxel_ddns_cli -m $dev_mac -s $dev_serial -h "0" -c "delete" > /var/update_myzyxel_ddns_log
+  if [ -f /var/update_myzyxel_ddns_log ]; then
+    local code_number=$(cat /var/update_myzyxel_ddns_log | grep -r "code" | awk -F'"' '{print $2}')
+    if [ -n "$code_number" ]; then
+      if [ "$code_number" = "405.6" ]; then
+        code_number="success"
+      fi
+      echo "$code_number" > /var/update_myzyxel_ddns_status
+    else
+      echo "success" > /var/update_myzyxel_ddns_status
+    fi
+  fi
+}
+
+start_service() {
+  local service=$(uci get updatedd.general.service)
+  local username=$(uci get updatedd.general.username)
+  local password=$(uci get updatedd.general.password)
+  local host=$(uci get updatedd.general.host)
+  local update=$(uci get updatedd.general.update)
+
+  if [ "$update" = "1" ]; then
+    case "$service" in
+      "dyndns"|"noip"|"eurodyndns")
+        updatedd -Y $service -- $username:$password $host
+      ;;
+      "regfish")
+        updatedd -Y $service -- STD=$username:$password $host
+      ;;
+      "myzyxelcloud")
+        update_myzyxelcloud_DDNS $host
+      ;;
+      *)
+        echo "Not support '$service' service"
+      ;;
+    esac
+  else
+    if [ "$service" = "myzyxelcloud" ]; then
+      delete_myzyxelcloud_DDNS
+    fi
+  fi
+}
+
+host() {
+  local WAN_Iface=$(uci get network.wan.iface)
+  local WAN_IP=$(ifconfig $WAN_Iface | grep "inet addr")
+  [ -z "$WAN_IP" ] && exit 0
+  DDNS_host_check
+}
+
+start() {
+  local WAN_Iface=$(uci get network.wan.iface)
+  local WAN_IP=$(ifconfig $WAN_Iface | grep "inet addr")
+  [ -z "$WAN_IP" ] && exit 0
+  start_service
+  /etc/init.d/openvpn_server start
+}
+
+case "$1" in
+  "boot"|"start"|"restart"|"reload"|"zyxel_ddns")
+    start
+  ;;
+  "host")
+    host
+  ;;
+esac

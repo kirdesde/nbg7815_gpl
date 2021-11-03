@@ -1,0 +1,237 @@
+--- a/send.c
++++ b/send.c
+@@ -41,7 +41,6 @@ send_ra_forall(struct Interface *iface, 
+ 		g_NeedSetRaltToZero = check_wan_ip_empty();
+ 
+ 		if (g_NeedSetRaltToZero != g_HasSetRaltToZero) {
+-
+ 			if (g_NeedSetRaltToZero == 1) {
+ 				set_prefix_lifetimes_to_zero(iface);
+ 			} else {
+@@ -128,10 +127,10 @@ int check_wan_ip_empty(void)
+ 	char m_6rdenable[50] = "";
+ 	if((fp_6rdenable = fopen("/tmp/wan6rd_enable", "r")) == NULL ){
+ 		fprintf(stderr, "fail to open tmpwan6rd_enable file\n");
+-		exit(1);
++	}else {
++		fscanf(fp_6rdenable,"%s",m_6rdenable);
++		fclose(fp_6rdenable);
+ 	}
+-	fscanf(fp_6rdenable,"%s",m_6rdenable);
+-	fclose(fp_6rdenable);
+ 
+ 	// chk if 6to4 is enabled.
+ 	FILE *fp_6to4enable = NULL;
+@@ -181,34 +180,31 @@ int check_wan_ip_empty(void)
+ 		if (strstr(m_6rdenable, "1")){
+ 			if (check_tunnel_interface("6rd-wan6rd"))
+ 				infStatus = 1;			
+-#if 0		/*support 6rd now */
++//#if 0		/*support 6rd now */
+ 		} else if (strstr(m_6to4enable, "1")) {
+ 			if (check_tunnel_interface("6to4-wan6to4"))
+ 				infStatus = 1;			
+ 		} else if (strstr(m_6in4enable, "1")) {
+ 			if (check_tunnel_interface("6in4-wan6in4"))
+ 				infStatus = 1;	
+-#endif
++//#endif
+ 		} else {
+-			infStatus = 1;	
++			infStatus = 1;
+ 		}
+-		/*workaround : attempting to reread config file, only for tunneling feature*/
+-		g_NeedSetRaltToZero=0;
+-		g_HasSetRaltToZero=0;
+ 
+ 		if( infStatus ){
+-//			syslog(LOG_USER|LOG_DEBUG, "Tunneling Interface Up");
+-			return 0; // wanip EXIST.
++			//syslog(LOG_USER|LOG_DEBUG, "Tunneling Interface Up");
++			//return 0; // wanip EXIST.
+ 		}else{
+-//			syslog(LOG_USER|LOG_DEBUG, "Tunneling Interface Down");
++			//syslog(LOG_USER|LOG_DEBUG, "Tunneling Interface Down");
+ 			return 1; // wanip EMPTY.
+ 		}
+ 			
+ 
+ 		//snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep 'inet ' |awk '{print $2}' > /tmp/wanip\n", m_ifname); // 6rd is ENABLED/6to4 is ENABLED/6in4 is ENABLED/ULA is ENABLED
+-	} else {
+-		snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep Global |awk '{print $3}' > /tmp/wanip\n", m_ifname);
+ 	}
++
++	snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep Global |awk '{print $3}' > /tmp/wanip\n", m_ifname);
+ 	system(m_msg);
+ 
+ 	// chk wan ip.
+@@ -223,10 +219,37 @@ int check_wan_ip_empty(void)
+ 	fclose(fp_wanip);
+ 
+ 	if ( strstr(m_wanip, ":") == NULL ) {
++		//syslog(LOG_USER|LOG_DEBUG, "WAN IP is not exist");
++		return 1; // wanip EMPTY.
++	} else {
++		//syslog(LOG_USER|LOG_DEBUG, "WAN IP is exist");
++		//return 0; // wanip EXIST.
++	}
++
++	//check wan link status(1: down, 0:up)
++	FILE *fp_wanlinkstatus= NULL;
++	char m_wanlinkstatus[128]= "";
++	sprintf(m_wanlinkstatus, "/sbin/swconfig dev eth0 port 5 get link | grep down -c");
++	if((fp_wanlinkstatus = popen(m_wanlinkstatus, "r")) == NULL ){
++		fprintf(stderr, "fail to fopen /sbin/swconfig");
++		return 1; // WenHsien 2015.1124: During reboot, fopen /tmp/wan_link_status will always FAIL, so default to EXIST.
++	}
++	if(fgets(m_wanlinkstatus, 128, fp_wanlinkstatus)==NULL){
++		fprintf(stderr, "fail to read popen fd");
++		return 1;
++	}
++	pclose(fp_wanlinkstatus);
++	if (atoi(m_wanlinkstatus)==1) {
++		//syslog(LOG_USER|LOG_DEBUG, "WAN link status is 1");
+ 		return 1; // wanip EMPTY.
+ 	} else {
+-		return 0; // wanip EXIST.
++		//syslog(LOG_USER|LOG_DEBUG, "WAN link status is 0");
++		//return 0; // wanip EXIST.
+ 	}
++
++	//wan interface is up, v6 IP is exist, wan link is 1
++	return 0;
++
+ }
+ 
+ void set_prefix_lifetimes_to_zero(struct Interface *iface)
+@@ -243,6 +266,7 @@ void set_prefix_lifetimes_to_zero(struct
+ 	{
+ 		if (!iface) return;
+ 
++		iface->AdvDefaultLifetime_bak= iface->AdvDefaultLifetime;	//backup AdvDefaultLifetime
+ 		iface->AdvDefaultLifetime = 0;
+ 
+ 		for (prefix = iface->AdvPrefixList; prefix;
+@@ -277,6 +301,8 @@ void set_prefix_lifetimes_back(struct In
+ 	{
+ 		if (!iface) return;
+ 
++		iface->AdvDefaultLifetime= iface->AdvDefaultLifetime_bak;	//restore AdvDefaultLifetime
++
+ 		for (prefix = iface->AdvPrefixList; prefix;
+ 							prefix = prefix->next)
+ 		{
+--- a/radvd.c
++++ b/radvd.c
+@@ -103,6 +103,7 @@ void set_prefix_to_old(void);
+ void set_prefix_back_to_new(void);
+ int pd_change_flag_on(void);
+ int is_old_new_prefix_exist_and_diff(void);
++int initiativeCheckLifetime();
+ 
+ int
+ main(int argc, char *argv[])
+@@ -380,6 +381,8 @@ main(int argc, char *argv[])
+ 	return 0;
+ }
+ 
++unsigned long g_lastChkWanCable_time_in_micros = 0;
++
+ void main_loop(void)
+ {
+ 	struct pollfd fds[2];
+@@ -418,6 +421,8 @@ void main_loop(void)
+ 				}
+ 			}
+ 		}
++		//2016/1/11, Niko. the max timeout is 10 secs, because if wifi is off the timeout time there will be too long
++		timeout= timeout>10000? 10000: timeout;
+ 
+ 		dlog(LOG_DEBUG, 5, "polling for %g seconds.", timeout/1000.0);
+ 
+@@ -473,6 +478,21 @@ void main_loop(void)
+ 			sigusr1_received = 0;
+ 		}
+ 
++
++		struct timeval tv;
++		gettimeofday(&tv,NULL);
++		unsigned long time_in_micros = 1000000 * tv.tv_sec + tv.tv_usec;
++
++		if (time_in_micros - g_lastChkWanCable_time_in_micros > 2000000) {
++			g_lastChkWanCable_time_in_micros = time_in_micros;
++			//2015/09/22 Niko add, call kickoff_adverts if need send RA
++			if ( initiativeCheckLifetime()==1 )
++			{
++				kickoff_adverts();
++			}
++		}
++
++
+ 	}
+ }
+ 
+@@ -649,6 +669,13 @@ void reload_config(void)
+ 
+ 	/* XXX: fails due to lack of permissions with non-root user */
+ 	config_interface();
++
++	//2016/01/08, niko: adter reread config, check wan status. then kickoff_adverts
++	if(check_wan_ip_empty()==1)
++	{
++		set_prefix_lifetimes_to_zero(IfaceList);
++		g_HasSetRaltToZero= 1;
++	}
+ 	kickoff_adverts();
+ 
+ 	flog(LOG_INFO, "resuming normal operation");
+@@ -1186,3 +1213,21 @@ kickoff_adverts_when_pd_change(void)
+         }
+ }
+ 
++//2015/09/22, Niko add, initiative check is need send lifetime=0 or normal lifetime RA package
++int initiativeCheckLifetime()
++{
++	static int wanip_empty_flag= 0; //exclusive flag, trigger one time only
++	if( wanip_empty_flag==0 && check_wan_ip_empty()==1 )
++	{
++		wanip_empty_flag= 1;
++		return 1;
++	}
++	if( wanip_empty_flag==1 && check_wan_ip_empty()==0 )
++	{
++		wanip_empty_flag= 0;
++		return 1;
++	}
++	
++	return 0;
++}
++
+--- a/radvd.h
++++ b/radvd.h
+@@ -63,6 +63,7 @@ struct Interface {
+ 	uint32_t		AdvRetransTimer;
+ 	uint8_t			AdvCurHopLimit;
+ 	int32_t			AdvDefaultLifetime;   /* XXX: really uint16_t but we need to use -1 */
++	int32_t			AdvDefaultLifetime_bak;	//2016/01/07 Niko: backup Router Lifetime for set_prefix_lifetimes_to_zero() and set_prefix_lifetimes_back() functions
+ 	int			AdvDefaultPreference;
+ 	int			AdvSourceLLAddress;
+ 	int			UnicastOnly;
+--- a/interface.c
++++ b/interface.c
+@@ -43,6 +43,7 @@ iface_init_defaults(struct Interface *if
+ 
+ 	iface->MinRtrAdvInterval = -1;
+ 	iface->AdvDefaultLifetime = -1;
++	iface->AdvDefaultLifetime_bak = -1;	//Niko add
+ 	iface->AdvDefaultPreference = DFLT_AdvDefaultPreference;
+ 	iface->HomeAgentLifetime = -1;
+ }
+@@ -174,6 +175,7 @@ check_iface(struct Interface *iface)
+ 
+ 	if (iface->AdvDefaultLifetime < 0)
+ 		iface->AdvDefaultLifetime = DFLT_AdvDefaultLifetime(iface);
++	iface->AdvDefaultLifetime_bak= iface->AdvDefaultLifetime;	//Niko add
+ 
+ 	if ((iface->AdvDefaultLifetime != 0) &&
+ 	   ((iface->AdvDefaultLifetime > MAX_AdvDefaultLifetime) ||

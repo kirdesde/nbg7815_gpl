@@ -1,0 +1,32 @@
+#!/bin/sh
+# Copyright (C) 2006 OpenWrt.org
+
+PPTP_FILE=/etc/ppp/options.pptp
+
+pptp_Encryption=$(uci get network.wan.encryption)
+pptp_wan_fixed_ip=$(uci get network.wan.wan_fixed_ip)
+
+echo "noipdefault"	> $PPTP_FILE
+echo "nobsdcomp"	>> $PPTP_FILE
+echo "nodeflate"	>> $PPTP_FILE
+echo "idle 0"	>> $PPTP_FILE
+echo "maxfail 0"        >> $PPTP_FILE
+echo "lcp-echo-interval 10"     >> $PPTP_FILE
+echo "lcp-echo-failure 6"       >> $PPTP_FILE
+
+case "$pptp_Encryption" in
+	"Auto")
+		echo "mppe required,stateless" >> $PPTP_FILE
+	;;
+	"40")
+		echo "mppe required,no56,no128,stateless" >> $PPTP_FILE
+	;;
+	"128")
+		echo "mppe required,no40,no56,stateless" >> $PPTP_FILE
+	;;
+esac
+
+echo "persist" >> $PPTP_FILE
+if [ "$pptp_wan_fixed_ip" != "" ]; then
+	echo "$pptp_wan_fixed_ip:" >> $PPTP_FILE
+fi

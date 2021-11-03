@@ -1,0 +1,11 @@
+#!/bin/sh
+
+. /etc/functions.sh
+include /lib/config
+
+if [ "$ACTION" = "ifup" -a "$INTERFACE" = "wan" ]; then 
+  iptables -F FORWARD 2>/dev/null
+  /etc/init.d/firewall reload
+#  /etc/init.d/guest_wlan reload
+fi
+

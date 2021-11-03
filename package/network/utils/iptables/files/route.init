@@ -1,0 +1,83 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2006 OpenWrt.org
+
+START=90
+
+##check mode,if AP/UR,exit
+sys_mode=$(get_sys_mode)
+[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] && exit 0
+
+boot() {
+	count=`uci get route.general.routes_count`
+	i=1
+	while [ $i -le $count ]
+	do
+		enable=`uci get route.route$i.enable`
+		dst=`uci get route.route$i.dest_ip`
+		mask=`uci get route.route$i.netmask`
+		gateway=`uci get route.route$i.gateway`
+		if [ "$enable" = "1" ] ; then
+			route add -net $dst netmask $mask gw $gateway
+		fi
+		i=`expr $i + 1`
+	done
+}
+
+start() {
+	count=`uci get route.general.routes_count`
+	i=1
+	while [ $i -le $count ]
+	do
+		new=`uci get route.route$i.new`
+		edit=`uci get route.route$i.edit`
+		delete=`uci get route.route$i.delete`
+		dst=`uci get route.route$i.dest_ip`
+		mask=`uci get route.route$i.netmask`
+		gateway=`uci get route.route$i.gateway`
+		enable=`uci get route.route$i.enable`
+		if [ "$new" = "1" ] ; then
+			if [ "$enable" = "1" ] ; then
+				route add -net $dst netmask $mask gw $gateway
+			fi
+			uci set route.route$i.new=0
+			uci commit route
+			sync #This command is for emmc and ext4 filesystem
+		fi
+		if [ "$edit" = "1" ] ; then
+			oldenable=`uci get route.route$i.enable_old`
+			olddst=`uci get route.route$i.dest_ip_old`
+		        oldmask=`uci get route.route$i.netmask_old`
+		        oldgateway=`uci get route.route$i.gateway_old`
+			if [ "$oldenable" = "1" ] ; then
+				route del -net $olddst netmask $oldmask gw $oldgateway
+#				echo "route del -net $olddst netmask $oldmask gw $oldgateway"
+			fi
+
+			if [ "$enable" = "1" ] ; then
+				route add -net $dst netmask $mask gw $gateway
+#				echo "route add -net $dst netmask $mask gw $gateway"
+			fi
+			uci set route.route$i.edit=0
+			uci commit route
+			sync #This command is for emmc and ext4 filesystem
+		fi
+		if [ "$delete" = "1" ] ; then
+			if [ "$enable" = "1" ] ; then
+				route del -net $dst netmask $mask gw $gateway
+			fi
+			routeid=$i
+			uci del route.route$routeid
+			while [ $routeid -lt $count ]
+			do
+				uci rename route.route`expr $routeid + 1`=route$routeid
+				routeid=`expr $routeid + 1`
+			done
+			count=`expr $count - 1`
+			i=`expr $i - 1`
+			uci set route.general.routes_count=$count
+			uci commit route
+			sync #This command is for emmc and ext4 filesystem
+		fi
+		i=`expr $i + 1`
+	done
+}

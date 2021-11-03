@@ -1,0 +1,65 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2006 OpenWrt.org
+START=81
+
+BIN=lighttpd
+DEFAULT=/etc/default/$BIN
+LOG_D=/var/log/$BIN
+RUN_D=/var/run
+PID_F=$RUN_D/$BIN.pid
+UPLOAD_TMP_D=/tmp/$BIN
+UPLOAD_TMP_LOCAL_D=/tmp/${BIN}.local
+
+start() {
+	/usr/sbin/lighttpd-port init
+
+	[ -f /tmp/restart_lighttpd ] && {
+		rm /tmp/restart_lighttpd
+		exit 0
+	}
+
+	[ -f $DEFAULT ] && . $DEFAULT
+	mkdir -p $LOG_D
+	mkdir -p $RUN_D
+	mkdir -p $UPLOAD_TMP_LOCAL_D
+	rm -f $UPLOAD_TMP_D
+	ln -s $UPLOAD_TMP_LOCAL_D $UPLOAD_TMP_D
+
+	$BIN $OPTIONS
+}
+
+stop() {
+	[ -f /tmp/restart_lighttpd ] || {
+	#	[ -f $PID_F ] && kill $(cat $PID_F)
+		killall lighttpd
+		/usr/sbin/lighttpd-port off
+	}
+}
+
+boot() {
+#	web_feature=$(wifisys_tool -g 1 -f 1)
+#	##################################
+#	# GUI
+#	# rm -rf /tmp/ApplicationData/gui
+#	[ "$web_feature" == 0 ] && rm -rf /www/gui/
+#	[ "$web_feature" == 0 ] || {
+#		# tar jxf /gui.tar.bz2 -C /tmp/ApplicationData
+#		# rm -f /www/gui
+#		# ln -s /tmp/ApplicationData/gui /www/gui
+#		[ -e "/www/gui/favicon.ico" ] && cp /www/gui/favicon.ico /www/favicon.ico
+#	}
+#	##################################
+
+#	##################################
+#	# GUI_captivePortal
+#	# rm -rf /tmp/ApplicationData/gui_captivePortal
+#	[ "$web_feature" == 0 ] && rm -rf /www/captiveportal/
+#	[ "$web_feature" == 0 ] || {
+#		# tar jxf /gui_captivePortal.tar.bz2 -C /tmp/ApplicationData
+#		# rm -f /www/captiveportal
+#		[ -e "/www/captiveportal/favicon.ico" ] && cp /www/captiveportal/favicon.ico /www/favicon.ico
+#	}
+#	##################################
+
+	start
+}

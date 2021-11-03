@@ -1,0 +1,128 @@
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -1065,6 +1065,34 @@ client6_dad_check(arg)
+ }
+ #endif
+ 
++/* WenHsien: to get MAC addr. */
++#include <stdio.h>    //printf
++#include <string.h>   //strncpy
++#include <sys/socket.h>
++#include <sys/ioctl.h>
++#include <net/if.h>   //ifreq
++#include <unistd.h>   //close
++void getmacaddr(ifname,mac)
++   unsigned char *ifname;
++   unsigned char **mac;
++{    
++    int fd;
++    struct ifreq ifr;
++    char *iface = ifname;
++
++    fd = socket(AF_INET, SOCK_DGRAM, 0);
++
++    ifr.ifr_addr.sa_family = AF_INET;
++    strncpy(ifr.ifr_name , iface , IFNAMSIZ-1);
++
++    ioctl(fd, SIOCGIFHWADDR, &ifr);
++
++    close(fd);
++
++    *mac = (unsigned char *)ifr.ifr_hwaddr.sa_data;
++    return;
++}
++
+ static int
+ construct_confdata(ifp, ev)
+ 	struct dhcp6_if *ifp;
+@@ -1092,6 +1120,56 @@ construct_confdata(ifp, ev)
+ 		memset(evd, 0, sizeof(evd));
+ 
+ 		memset(&iaparam, 0, sizeof(iaparam));
++		
++		// WenHsien: According to RFC3315 Ch.10 Sec.3 ...
++		//  The IAID uniquely identifies the IA and must be chosen to be unique
++        //  among the IAIDs on the client.  The IAID is chosen by the client.
++        //  For any given use of an IA by the client, the IAID for that IA MUST
++        //  be consistent across restarts of the DHCP client.  The client may
++        //  maintain consistency either by storing the IAID in non-volatile
++        //  storage or by using an algorithm that will consistently produce the
++        //  same IAID as long as the configuration of the client has not changed.
++        //  There may be no way for a client to maintain consistency of the IAIDs
++        //  if it does not have non-volatile storage and the client's hardware
++        //  configuration changes.
++        
++        // WenHsien: and according to RFC3633 Ch.6 Sec.3 ...
++        //  The IAID uniquely identifies the IA_PD and must be chosen to be
++        //  unique among the IA_PD IAIDs on the requesting router.  The IAID is
++        //  chosen by the requesting router.  For any given use of an IA_PD by
++        //  the requesting router, the IAID for that IA_PD MUST be consistent
++        //  across restarts of the requesting router.  The requesting router may
++        //  maintain consistency either by storing the IAID in non-volatile
++        //  storage or by using an algorithm that will consistently produce the
++        //  same IAID as long as the configuration of the requesting router has
++        //  not changed.  If the requesting router uses only one IAID, it can use
++        //  a well-known value, e.g., zero.
++        
++		// WenHsien: Here get MAC address, merge opt. type to generate unique IAID.
++		unsigned char *mac=NULL;
++		unsigned char *ifname=NULL;
++   		unsigned int type = 0;
++		// get mac
++		if (ifp->ifname) {
++			ifname = ifp->ifname;
++		} else {
++			ifname = "eth0";
++		}
++       getmacaddr(ifname,&mac);
++		// get type
++   		if (IATYPE_PD == iac->type) {
++   			type = 25;
++   		} else if (IATYPE_NA == iac->type) {
++   			type = 3;
++   		}
++   		// merge
++		iac->iaid += mac[2] << 24;
++		iac->iaid += mac[3] << 16;
++		iac->iaid += mac[4] << 8;
++		iac->iaid += mac[5];
++		iac->iaid += type;
++		
++		
+ 		iaparam.iaid = iac->iaid;
+ 		switch (iac->type) {
+ 		case IATYPE_PD:
+@@ -1762,6 +1840,33 @@ client6_recvadvert(ifp, dh6, len, optinf
+ 		}
+ 		else if (evd->type == DHCP6_EVDATA_IAPD) {
+ 			//Peter: need to be added in the future....
++			//WenHsien: here I am....
++			iaparam.iaid = 0;
++			for (iac = TAILQ_FIRST(&ifp->iaconf_list);
++				iac; iac = TAILQ_NEXT(iac, link))
++			{
++				if (iac->type == IATYPE_PD) {
++					iaparam.iaid = iac->iaid;
++					break;
++				}
++			}
++			if ( 	(iaparam.iaid)
++				&&
++				(iav = dhcp6_find_listval(&optinfo->iapd_list,
++						DHCP6_LISTVAL_IAPD, &iaparam, 0)) )
++			{
++				for (siav = TAILQ_FIRST(&iav->sublist); siav;
++					siav = TAILQ_NEXT(siav, link))
++				{
++					if ( 	(siav->type == DHCP6_LISTVAL_STCODE)
++						&&
++						(siav->val_num16 == DH6OPT_STCODE_NOPREFIXAVAIL) )
++					{
++						dprintf(LOG_INFO, FNAME, "DH6OPT_STCODE_NOPREFIXAVAIL");
++						return (-1);
++					}
++				}
++			}
+ 		}
+ 	}
+ 

@@ -1,0 +1,40 @@
+#!/bin/sh
+
+. /lib/functions.sh
+include /lib/upgrade
+
+# stop services
+wifi down
+/etc/init.d/zyxel_ble_init stop
+/etc/init.d/block_event_listener stop
+/etc/init.d/zy1905 stop
+/etc/init.d/netprobe stop
+/etc/init.d/zapi-service stop
+/etc/init.d/aq_fw_loader stop
+/etc/init.d/fanctld stop
+/etc/init.d/cron stop
+/etc/init.d/lighttpd stop
+/etc/init.d/rngd stop
+/etc/init.d/thermal stop
+
+#send XMPP unpair
+echo "[romreset] unpair device..." > /dev/console
+[ -f /tmp/.cloudagent/device_register_api ] && zyxel_device_register -s `cat /tmp/.cloudagent/device_register_api` -r &
+
+sleep 3
+
+echo "[romreset] kill process..." > /dev/console
+kill_remaining TERM > /dev/console
+sleep 3
+kill_remaining KILL > /dev/console
+
+firstboot
+mount -o remount /
+
+if [ "$1" -eq "0" ]; then
+	echo "[romreset] Not Rebooting..." > /dev/console
+	exit
+fi
+
+echo "[romreset] Rebooting..." > /dev/console
+reboot -f

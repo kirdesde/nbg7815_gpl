@@ -1,0 +1,50 @@
+#!/bin/sh
+
+hostapd_reload() {
+  ifname_list=$1
+  DEV=$2
+
+  for i in $ifname_list
+  do
+    disabled=$(uci get wireless.$i.disabled)
+    if [ "$disabled" == "1" ]; then
+      continue
+    fi
+
+    #make sure interface was added into bridge
+    network=$(uci get wireless.$i.network)
+    ubus call network.interface.$network add_device "{ \"name\": \"$i\" }"
+
+    hostapd_cli -i "$i" -p /var/run/hostapd-"$DEV" reload
+  done
+}
+
+[ "$ACTION" = add ] && [ "$INTERFACE" = br-lan ] && {
+  ifname_24G_list="ath0 ath2"
+  ifname_5G_list="ath10 ath12"
+  DEV24G="wifi1"
+  DEV5G="wifi0"
+
+  hostapd_reload "$ifname_24G_list" "$DEV24G"
+  hostapd_reload "$ifname_5G_list" "$DEV5G"
+}
+
+[ "$ACTION" = add ] && [ "$INTERFACE" = br-guest ] && {
+  ifname_24G_list="ath1"
+  ifname_5G_list="ath11"
+  DEV24G="wifi1"
+  DEV5G="wifi0"
+
+  hostapd_reload "$ifname_24G_list" "$DEV24G"
+  hostapd_reload "$ifname_5G_list" "$DEV5G"
+}
+
+[ "$ACTION" = add ] && [ "$INTERFACE" = br-visitor ] && {
+  ifname_24G_list="ath5"
+  ifname_5G_list="ath15"
+  DEV24G="wifi1"
+  DEV5G="wifi0"
+
+  hostapd_reload "$ifname_24G_list" "$DEV24G"
+  hostapd_reload "$ifname_5G_list" "$DEV5G"
+}

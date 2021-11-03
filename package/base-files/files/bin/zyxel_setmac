@@ -1,0 +1,118 @@
+#!/bin/sh
+. /etc/functions.sh
+include /lib/config
+
+base_addr=$(fw_printenv ethaddr | awk -F"=" '{print $2}' |sed 's/"//g')
+
+[ -z "$base_addr" ] && exit 1
+
+set_ethWAN_mac(){
+	lastchar=$(echo $base_addr | cut -c 17-17)
+	##For WAN Interface
+	wan_ifname=$(uci_get network wan ifname)
+	eth_if=$wan_ifname
+	ifconfig $eth_if down
+	case $lastchar in
+        	"0")
+        	        mac_address=$(echo $base_addr | cut -c 1-16)	
+        	        ifconfig $eth_if hw ether $mac_address"1"	
+		;;
+        	"8")
+        	        mac_address=$(echo $base_addr | cut -c 1-16)	
+        	        ifconfig $eth_if hw ether $mac_address"9"	
+		;;
+		*)
+        	echo "Wrong end character in Mac address!"
+        	;;
+	esac
+	ifconfig $eth_if up
+}
+
+get_ethWAN_mac(){
+	lastchar=$(echo $base_addr | cut -c 17-17)
+	case $lastchar in
+        	"0")
+        	        mac_address=$(echo $base_addr | cut -c 1-16)	
+        	        echo $mac_address"1"	
+		;;
+        	"8")
+        	        mac_address=$(echo $base_addr | cut -c 1-16)	
+        	        echo $mac_address"9"	
+		;;
+	esac
+}
+
+set_ethLAN_mac(){
+	lastchar=$(echo $base_addr | cut -c 17-17)
+	##For LAN interfaces
+	lan_ifname=$(uci_get network lan ifname)
+	for eth_if in $lan_ifname; do
+		ifconfig $eth_if down
+		case $lastchar in
+			"0"|"8")
+			        mac_address=$(echo $base_addr | cut -c 1-16)	
+			        ifconfig $eth_if hw ether $base_addr	
+			;;
+			*)
+			echo "Wrong end character in Mac address!"
+			;;
+		esac
+		ifconfig $eth_if up
+	done
+}
+
+set_wlan_mac(){	
+	mac_addr=$(echo $base_addr | cut -c 1-16)
+	lastchar=$(echo $base_addr | cut -c 17-17)
+	curchar24G=
+	curchar5G=
+	case $lastchar in
+		0) 	curchar24G="2" 
+			curchar5G="3"
+			curchar5G_2="4"
+		;;
+		8) 	curchar24G="A"
+			curchar5G="B"
+			curchar5G_2="C"
+		;;
+		*)
+			echo "Wrong end character in Mac address!"
+        ;;
+
+	esac
+	wlan24G_main_mac=$mac_addr$curchar24G
+	echo $wlan24G_main_mac > /tmp/wlan_main_mac
+	echo "MacAddress=$wlan24G_main_mac" > /tmp/AR71XX_24G.dat
+	wlan5G_main_mac=$mac_addr$curchar5G
+	echo "MacAddress=$wlan5G_main_mac" > /tmp/AR71XX_5G.dat
+	wlan5G_2_main_mac=$mac_addr$curchar5G_2
+	echo "MacAddress=$wlan5G_2_main_mac" > /tmp/AR71XX_5G_2.dat
+}
+
+cmd=$1
+case "$cmd" in
+	ALL)
+		set_ethLAN_mac
+		set_ethWAN_mac	
+		set_wlan_mac	
+		exit $?
+        ;;
+	ethernet_WAN)
+		set_ethWAN_mac
+		exit $?
+        ;;
+	ethernet_LAN)
+		set_ethLAN_mac
+		exit $?
+        ;;
+	ethernet_WAN_GET)
+		get_ethWAN_mac	
+		;;
+	wlan)
+		set_wlan_mac
+        exit $?
+	;;
+esac
+
+exit $?
+

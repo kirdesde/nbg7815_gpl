@@ -1,0 +1,27 @@
+diff --git a/bwm-1.1.0.orig.orig/bwm.c b/bwm-1.1.0.orig/bwm.c
+index f1b08a7..03db592 100755
+--- bwm-1.1.0.orig.orig/bwm.c
++++ bwm-1.1.0.orig/bwm.c
+@@ -117,6 +117,11 @@ int main(int argc, char *argv[])
+       if(strstr(buffer, iface) == NULL)
+         continue;
+ 
++      buffer_pointer = buffer;
++      buffer_pointer = strtok(buffer_pointer, " :");
++      if(strcmp(buffer_pointer, iface))
++        continue;
++
+       interface[inum].time_old = interface[inum].time_new;
+       gettimeofday(&interface[inum].time_new, &tz);
+ 
+@@ -128,8 +133,8 @@ int main(int argc, char *argv[])
+ 
+       //if(inum > 0)
+       //{
+-        buffer_pointer = buffer;
+-        buffer_pointer = strtok(buffer_pointer, " :");
++        //buffer_pointer = buffer;
++        //buffer_pointer = strtok(buffer_pointer, " :");
+         strncpy(interface[inum].name, buffer_pointer, 11);
+ 
+         field_number = 0;

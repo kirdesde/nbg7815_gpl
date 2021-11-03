@@ -1,0 +1,30 @@
+--- a/prefixconf.c
++++ b/prefixconf.c
+@@ -148,10 +148,10 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 		return (-1);
+ 	}
+ 	snprintf(str, sizeof(str), "uci set radvd.prefix.AdvPreferredLifetime=%lu",pinfo->pltime);
+-        system(str);
+-        snprintf(str, sizeof(str), "uci set radvd.prefix.AdvValidLifetime=%lu",pinfo->vltime);
+-        system(str);
+-        snprintf(str, sizeof(str), "uci commit radvd");
++	system(str);
++	snprintf(str, sizeof(str), "uci set radvd.prefix.AdvValidLifetime=%lu",pinfo->vltime);
++	system(str);
++	snprintf(str, sizeof(str), "uci commit radvd");
+ 	system(str);
+ 
+ 	if (iac_pd == NULL) {
+@@ -222,6 +222,12 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 			}
+ 
+ 			if (spcreate) {
++				// Set LAN side IP lifetimes to 1.
++				snprintf(str, sizeof(str), "ifconfig %s |grep Global |awk '{print $3}' |xargs ip -6 addr change dev %s preferred_lft 1 valid_lft 1",
++						pif->ifname, pif->ifname);
++				system(str);
++				sleep(1);
++
+ 				add_ifprefix(sp, pinfo, pif);
+ 			}
+ 

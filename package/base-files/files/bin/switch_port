@@ -1,0 +1,47 @@
+#!/bin/sh
+
+usage(){
+	echo "Usage: switch_port [lan|wan] [reset]"
+}
+
+if [ "$#" -ne 2 ]; then
+	usage
+	exit 1
+fi
+
+case $2 in
+	"reset")			
+		if [ "$1" == "lan" ]; then
+			bootflag=$(cat /tmp/bootflag | sed 's/"//g' )
+			[ "$bootflag" == "1" ] || {
+				[ -f /tmp/Apply_dhcp_GUI ] || {
+					/etc/init.d/wifi_scheduling restart
+					/etc/init.d/wifi_scheduling5G restart
+				}
+			}
+	
+			for i in 1 2 3 4 6
+			do
+				ssdk_sh port autoNeg restart $i
+			done
+
+		fi
+
+		if [ "$1" == "wan" ]; then
+			ssdk_sh port autoNeg restart 5
+		fi
+
+	;;
+	"auto_ipchange")
+		if [ "$1" == "lan" ]; then
+			for i in 1 2 3 4 6
+			do
+				ssdk_sh port autoNeg restart $i
+			done
+		fi
+	;;
+	*)
+		echo "Wrong parameter!!"
+	;;
+esac
+

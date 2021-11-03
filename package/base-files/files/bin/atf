@@ -1,0 +1,304 @@
+#!/bin/sh
+
+. /lib/functions.sh
+include /lib/config
+
+# reference from qcawifi.sh
+
+atf_radio_vap_params_config() {
+	local device="$1"
+	local atf_sched_dur
+	local atfstrictsched
+	local atfobsssched
+	local atfobssscale
+	local atfgrouppolicy
+
+	config_get atf_sched_dur "$device" atf_sched_dur
+	[ -n "$atf_sched_dur" ] && iwpriv "$device" "atf_sched_dur" "$atf_sched_dur"
+
+	config_get atfstrictsched "$device" atfstrictsched
+	[ -n "$atfstrictsched" ] && iwpriv "$device" "atfstrictsched" "$atfstrictsched"
+
+	config_get atfobsssched "$device" atfobsssched
+	[ -n "$atfobsssched" ] && iwpriv "$device" "atfobsssched" "$atfobsssched"
+
+	config_get atfobssscale "$device" atfobssscale
+	[ -n "$atfobssscale" ] && iwpriv "$device" "atfobssscale" "$atfobssscale"
+
+	config_get atfgrouppolicy "$device" atfgrouppolicy
+	[ -n "$atfgrouppolicy" ] && iwpriv "$device" "atfgrouppolicy" "$atfgrouppolicy"
+
+	config_get disabled $device disabled 0
+	if [ $disabled -eq 0 ]; then
+		config_get vifs "$device" zy_vap_list 
+
+		local ifidx=0
+		local radioidx=${device#wifi}
+		for vif in $vifs; do
+			local vifname
+			#[ $ifidx -gt 0 ] && vifname="ath${radioidx}$ifidx" || vifname="ath${radioidx}"
+			vifname=$vif
+
+			config_get atf_shr_buf "$vif" atf_shr_buf
+			[ -n "$atf_shr_buf" ] && iwpriv "$vifname" "atf_shr_buf" "$atf_shr_buf"
+
+			config_get atf_max_buf "$vif" atf_max_buf
+			[ -n "$atf_max_buf" ] && iwpriv "$vifname" "atf_max_buf" "$atf_max_buf"
+
+			config_get atf_min_buf "$vif" atf_min_buf
+			[ -n "$atf_min_buf" ] && iwpriv "$vifname" "atf_min_buf" "$atf_min_buf"
+
+			config_get commitatf "$vif" commitatf
+			[ -n "$commitatf" ] && iwpriv "$vifname" "commitatf" "$commitatf"
+
+			config_get atfmaxclient "$vif" atfmaxclient
+			[ -n "$atfmaxclient" ] && iwpriv "$vifname" "atfmaxclient" "$atfmaxclient"
+
+			config_get atfssidgroup "$vif" atfssidgroup
+			[ -n "$atfssidgroup" ] && iwpriv "$vifname" "atfssidgroup" "$atfssidgroup"
+
+			config_get atf_tput_at "$vif" atf_tput_at
+			[ -n "$atf_tput_at" ] && iwpriv "$vifname" "atf_tput_at" "$atf_tput_at"
+
+			config_get atfssidsched "$vif" atfssidsched
+			[ -n "$atfssidsched" ] && iwpriv "$vifname" "atfssidsched" "$atfssidsched"
+
+			#ifidx=$(($ifidx + 1))
+		done
+	fi
+
+}
+
+atf_group_config_add() {
+	local ifname
+	local group
+	local ssid
+	local airtime
+	local device
+	local reload_device
+
+	config_get ifname "$1" ifname
+	config_get group_ifname "$1" group_ifname
+	config_get group "$1" group
+	config_get airtime "$1" airtime
+
+	device=$(uci get wireless.$ifname.device)
+	reload_device=$(cat /tmp/WirelessDev)
+
+	if [ "$reload_device" != "" ] && [ "$reload_device" != "$device" ]; then
+		return 1
+	fi
+
+	if [ -z "$group" ] ; then
+		echo "Invalid ATF GROUP Configuration"
+		return 1
+	fi
+
+	if [ -n "$airtime" ]; then
+		for vif in $group_ifname; do
+			ssid=$(uci get wireless.$vif.ssid)
+			if [ -n "$ssid" ]; then
+				wlanconfig $ifname addatfgroup $group "$ssid"
+			fi
+		done
+		wlanconfig $ifname configatfgroup $group $airtime
+	fi
+
+#	if [ "$cmd" == "delgroup" ]; then
+#		wlanconfig ath$radioidx delatfgroup $group
+#	fi
+}
+
+atf_group_config_del() {
+	local ifname
+	local group
+	local device
+	local reload_device
+
+	config_get ifname "$1" ifname
+	config_get group "$1" group
+
+	device=$(uci get wireless.$ifname.device)
+	reload_device=$(cat /tmp/WirelessDev)
+
+	if [ "$reload_device" != "" ] && [ "$reload_device" != "$device" ]; then
+		return 1
+	fi
+
+	wlanconfig $ifname delatfgroup $group
+}
+
+atf_ssid_config() {
+	local cmd
+	local ssid
+	local airtime
+	local device
+
+	config_get device "$1" device
+	radioidx=${device#wifi}
+
+	config_get cmd "$1" command
+	config_get ssid "$1" ssid
+	config_get airtime "$1" airtime
+
+	if [ -z "$cmd" ] || [ -z "$ssid" ] ; then
+		echo "Invalid ATF SSID Configuration"
+		return 1
+	fi
+
+	if [ "$cmd" == "addssid" ] && [ -n "$airtime" ]; then
+		wlanconfig ath$radioidx $cmd $ssid $airtime
+	fi
+
+	if [ "$cmd" == "delssid" ]; then
+		wlanconfig ath$radioidx $cmd $ssid
+	fi
+}
+
+atf_sta_config() {
+	local cmd
+	local ssid
+	local airtime
+	local device
+	local mac
+
+	config_get device "$1" device
+	radioidx=${device#wifi}
+
+	config_get cmd "$1" command
+	config_get airtime "$1" airtime
+	config_get ssid "$1" ssid
+	config_get mac "$1" macaddr
+	mac="${mac//:}"
+
+	if [ -z "$cmd" ] || [ -z "$mac" ] ; then
+		echo "Invalid ATF STA Configuration"
+		return 1
+	fi
+
+	if [ "$cmd" == "addsta" ] && [ -n "$airtime" ]; then
+		wlanconfig ath$radioidx $cmd $mac $airtime $ssid
+	fi
+
+	if [ "$cmd" == "delsta" ]; then
+		wlanconfig ath$radioidx $cmd $mac
+	fi
+}
+
+atf_ac_config() {
+	local cmd
+	local ssid
+	local device
+	local ac
+	local airtime
+
+	config_get device "$1" device
+	radioidx=${device#wifi}
+
+	config_get cmd "$1" command
+	config_get ac "$1" ac
+	config_get airtime "$1" airtime
+	config_get ssid "$1" ssid
+
+	if [ -z "$cmd" ] || [ -z "$ssid" ] || [ -z "$ac" ] ; then
+		echo "Invalid ATF AC Configuration"
+		return 1
+	fi
+
+	if [ "$cmd" == "atfaddac" ] && [ -n "$airtime" ]; then
+		echo "wlanconfig ath$radioidx $cmd $ssid $ac:$airtime"
+	fi
+
+	if [ "$cmd" == "atfdelac" ]; then
+		echo "wlanconfig ath$radioidx $cmd $ssid $ac"
+	fi
+}
+
+atf_tput_config() {
+	local cmd
+	local tput
+	local max_airtime
+	local device
+	local mac
+
+	config_get device "$1" device
+	radioidx=${device#wifi}
+
+	config_get cmd "$1" command
+	config_get tput "$1" throughput
+	config_get max_airtime "$1" max_airtime
+	config_get mac "$1" macaddr
+	mac="${mac//:}"
+
+	if [ -z "$cmd" ] || [ -z "$mac" ] || [ -z "$tput" ] ; then
+		echo "Invalid ATF Throughput Configuration"
+		return 1
+	fi
+
+	if [ "$cmd" == "addtputsta" ]; then
+		iwpriv ath$radioidx commitatf 0
+		wlanconfig ath$radioidx addtputsta $mac $tput $max_airtime
+	fi
+
+	if [ "$cmd" == "deltputsta" ]; then
+		iwpriv ath$radioidx commitatf 0
+		wlanconfig ath$radioidx deltputsta $mac
+	fi
+}
+
+atf_enable() {
+	local device="$1"
+
+	config_get disabled $device disabled 0
+	if [ $disabled -eq 0 ]; then
+		config_get vifs "$device" zy_vap_list
+		echo "device: $device vifs: $vifs"
+
+		for vif in $vifs; do
+			config_get commitatf "$vif" commitatf
+			[ -n "$commitatf" ] && iwpriv "$vif" "commitatf" "$commitatf"
+		done
+	fi
+}
+
+atf_config() {
+	config_load wireless
+	config_foreach atf_radio_vap_params_config wifi-device
+
+	config_load atf_group
+	config_foreach atf_group_config_add atf-config-group
+
+#	config_load wireless
+#	config_foreach atf_ssid_config atf-config-ssid
+
+#	config_load atf_sta 
+#	config_foreach atf_sta_config atf-config-sta
+
+#	config_load wireless
+#	config_foreach atf_ac_config atf-config-ac
+
+#	config_load wireless
+#	config_foreach atf_tput_config atf-config-tput
+
+	config_load wireless
+	config_foreach atf_enable wifi-device
+}
+
+start_atf() {
+	atf_config	
+}
+
+stop_atf() {
+	config_load atf_group
+	config_foreach atf_group_config_del atf-config-group
+}
+
+case "$1" in
+	restart)
+		stop_atf
+		start_atf
+	;;
+	start)
+		start_atf
+	;;
+esac

@@ -1,0 +1,78 @@
+#!/bin/sh
+
+# wlanconfig format: 
+#  1    2   3    4      5      6    7    8     9     10   11    12  13    14             15       16   17        18 
+# ADDR AID CHAN TXRATE RXRATE RSSI IDLE TXSEQ RXSEQ CAPS ACAPS ERP STATE MAXRATE(DOT11) HTCAPS   MODE ASSOCTIME PSMODE
+
+ASSOC_LIST_24G=/tmp/assoc_list.24g
+ASSOC_LIST_24G_TMP=/tmp/assoc_list_tmp.24g
+ASSOC_LIST_24G_TMP2=/tmp/assoc_list_tmp2.24g
+
+ASSOC_LIST_5G=/tmp/assoc_list.5g
+ASSOC_LIST_5G_TMP=/tmp/assoc_list_tmp.5g
+ASSOC_LIST_5G_TMP2=/tmp/assoc_list_tmp2.5g
+
+while true; do
+	###########################
+	# Get 2.4G
+	rm -f $ASSOC_LIST_24G
+
+	wlanconfig ath0 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath0"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels > $ASSOC_LIST_24G_TMP
+	wlanconfig ath1 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath1"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_24G_TMP
+	wlanconfig ath2 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath2"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_24G_TMP
+	wlanconfig ath4 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath4"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_24G_TMP
+	wlanconfig ath5 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath5"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_24G_TMP
+	
+	exec < $ASSOC_LIST_24G_TMP
+
+	while read line
+	do
+		mac=$(echo $line | awk '{print $1}')
+		apstats -s -m $mac > $ASSOC_LIST_24G_TMP2
+
+		Tx_Packets=$(cat $ASSOC_LIST_24G_TMP2 | grep "Tx Data Packets" | grep -v "per" | awk '{print $5}')
+		Rx_Packets=$(cat $ASSOC_LIST_24G_TMP2 | grep "Rx Data Packets" | grep -v "per" | awk '{print $5}')
+
+		#echo $line $Tx_Packets $Rx_Packets
+		echo $line $Tx_Packets $Rx_Packets >> $ASSOC_LIST_24G
+		rm -f $ASSOC_LIST_24G_TMP2
+	done
+
+	rm -f $ASSOC_LIST_24G_TMP
+
+	###########################
+	# Get 5G & 5GH
+	rm -f $ASSOC_LIST_5G
+
+	wlanconfig ath10 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath10"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels > $ASSOC_LIST_5G_TMP
+	wlanconfig ath11 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath11"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_5G_TMP
+	wlanconfig ath12 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath12"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_5G_TMP
+	wlanconfig ath14 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath14"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_5G_TMP
+	wlanconfig ath15 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath15"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_5G_TMP
+	
+	#wlanconfig ath22 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath22"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_5G_TMP
+	#wlanconfig ath23 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath23"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_5G_TMP
+	#wlanconfig ath20 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath20"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_5G_TMP
+	#wlanconfig ath24 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath24"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_5G_TMP
+	#wlanconfig ath25 list sta 2>/dev/null | awk '{print $1" "$4" "$6 " ath25"}' | grep -v Error | grep -v ADDR | grep -v Minimum | grep -v Maximum | grep -v HT | grep -v VHT | grep -v MU | grep -v SNR | grep -v Operating | grep -v Current | grep -v Supported | grep -v Max | grep -v Channels >> $ASSOC_LIST_5G_TMP
+
+	exec < $ASSOC_LIST_5G_TMP
+
+	while read line
+	do
+		mac=$(echo $line | awk '{print $1}')
+		apstats -s -m $mac > $ASSOC_LIST_5G_TMP2
+
+		Tx_Packets=$(cat $ASSOC_LIST_5G_TMP2 | grep "Tx Data Packets" | grep -v "per" | awk '{print $5}')
+		Rx_Packets=$(cat $ASSOC_LIST_5G_TMP2 | grep "Rx Data Packets" | grep -v "per" | awk '{print $5}')
+
+		#echo $line $Tx_Packets $Rx_Packets
+		echo $line $Tx_Packets $Rx_Packets >> $ASSOC_LIST_5G
+		rm -f $ASSOC_LIST_5G_TMP2
+	done
+
+	rm -f $ASSOC_LIST_5G_TMP
+
+    sleep 10
+done
+

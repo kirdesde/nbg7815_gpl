@@ -1,0 +1,23 @@
+--- aaa/source/utils/owrt_smbpasswd.c	2019-07-26 11:29:18.495537000 +0800
++++ bbb/source/utils/owrt_smbpasswd.c	2019-07-26 11:16:03.937738000 +0800
+@@ -138,16 +138,16 @@
+ 				char t2[256];
+ 				fgetpos(fp, &r_pos);
+ 				w_pos = r_pos;
+-				w_pos.__pos -= strlen(t);
++				w_pos.__align -= strlen(t);
+ 				while(fgets(t2, 256, fp))
+ 				{
+ 					fsetpos(fp, &w_pos);
+ 					fputs(t2, fp);
+-					r_pos.__pos += strlen(t2);
+-					w_pos.__pos += strlen(t2);
++					r_pos.__align += strlen(t2);
++					w_pos.__align += strlen(t2);
+ 					fsetpos(fp, &r_pos);
+ 				}
+-				ftruncate(fileno(fp), w_pos.__pos);
++				ftruncate(fileno(fp), w_pos.__align);
+ 				break;
+ 			}
+ 		}

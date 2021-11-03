@@ -1,0 +1,9 @@
+#!/bin/sh
+
+[ -f /etc/config/radvd ] && [ "$ACTION" == "start" ] && {
+	IsIpv6Enable=$(uci get network.wan.ipv6)
+	Is6rdEnable=$(uci get network.general.wan6rd_enable)
+	[ "$IsIpv6Enable" == "1" -o "$Is6rdEnable" == "1" ] && {
+		/etc/init.d/radvd reload config
+	}
+}

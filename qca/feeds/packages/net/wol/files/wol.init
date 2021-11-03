@@ -1,0 +1,87 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2007 OpenWrt.org
+. /etc/functions.sh
+include /lib/config
+
+START=60
+
+##check mode,if AP/UR,exit	
+sys_mode=$(get_sys_mode)
+[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] && exit 0
+
+#proto=$(uci_get network wan proto)
+#if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+#	WAN="$proto"-wan
+#else
+#	WAN=$(uci_get network wan ifname)
+#fi
+WAN=$(uci_get network wan ifname)
+
+#append_string() {
+#	local section="$1"
+#	local option="$2"
+#	local value="$3"
+#	local _val
+#	config_get _val "$section" "$option"
+#	[ -n "$_val" ] && append args "$3$_val"
+#}
+
+start_service() {
+	enable=$(uci_get wol wol enabled)
+	args=""
+
+	if [ "$enable" == "1" ]; then
+		mac=$(uci_get wol wol mac)
+		broadcast=$(uci_get wol main broadcast)
+		port=$(uci get wol.main.port)
+
+		args="--host=$broadcast --port=$port $mac"
+
+		#wake up device
+		/usr/bin/wol $args
+	fi
+	
+	## reset enable to 0
+	uci set wol.wol.enabled=0
+	uci commit
+	sync #This command is for emmc and ext4 filesystem
+}
+
+boot() {
+	exit 0
+}
+
+restart() {
+	iptables -t mangle -F wol_ipq
+	iptables -t mangle -D PREROUTING -j wol_ipq
+	iptables -t mangle -X wol_ipq
+	
+	killall -9 wolipq
+	rmmod nfnetlink_queue
+	
+	config_load wol
+	config_get wol_ipq_enable main enabled
+	config_get wolipq_Bcast main broadcast
+
+	Bcast=$(ifconfig br-lan | awk '/Bcast/{print $3}' | awk -F ':' '{ print $2}')
+	
+	if [ "$wolipq_Bcast" != "$Bcast" ]; then
+		uci set wol.main.broadcast=$Bcast
+		uci commit
+		sync #This command is for emmc and ext4 filesystem
+	fi
+
+	if [ "$wol_ipq_enable" == "1" ]; then
+		insmod nfnetlink_queue 2>&- >&-
+
+		config_get wol_port main port
+
+		iptables -t mangle -N wol_ipq
+		iptables -t mangle -I PREROUTING -j wol_ipq
+		iptables -t mangle -A wol_ipq -i $WAN -p udp --dport $wol_port -j QUEUE
+
+		/usr/bin/wolipq $wol_port &
+	fi
+	
+	config_foreach start_service wol-target
+}

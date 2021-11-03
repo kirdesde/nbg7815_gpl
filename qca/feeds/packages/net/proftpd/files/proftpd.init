@@ -1,0 +1,260 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2010 OpenWrt.org
+
+# . /sbin/functions.sh
+
+START=50
+
+BIN="/sbin/proftpd -c /var/proftpd.conf"
+RUN_D=/var
+PID_F=$RUN_D/proftpd.pid
+
+
+	
+proftp_creat_user() {
+	local proftpd_enable
+	local proftpd_name
+	local proftpd_passwd
+	local etc_passwd
+	local same_flag
+	local samba_enable
+	local samba_name
+	local openvpn_name
+	# clean do'nt used user 
+	local accountList_sys=$(awk -F':' '{ print $1}' /etc/passwd)
+	# clean do'nt used user 
+	for user in $accountList_sys
+	do
+		same_flag="0"
+		if [ "$user" == "root" ] || [ "$user" == "daemon" ] || [ "$user" == "ftp" ] || [ "$user" == "network" ] || [ "$user" == "nobody" ]; then
+			continue
+		fi
+		
+		echo "user=" $user
+		# check samba user 
+		for i in $(seq 1 5)
+		do
+			samba_enable=$(uci get samba.user${i}.enable)
+			if [ "$samba_enable" == "0" ] || [ "$samba_enable" == "" ];then
+				continue;
+			fi 
+		
+			samba_name=$(uci get samba.user${i}.name)
+			if [ "$user" == "$samba_name" ];then 
+				same_flag="1"
+				break
+			fi
+		done
+		
+		if [ "$same_flag" == "1" ];then
+			continue;
+		fi
+		
+		# check openvpn user
+		#local vpn_enable=$(uci get openvpn.server.enable)
+		#if [ "$vpn_enable" != "0" ]; then
+			##split ".-." and ".--."
+		#	local accountList=$(uci get openvpn.server.account)
+		#	list=$(echo $accountList |sed -r 's/.--./ /g')
+		#	for USER_VPN in $list
+		#	do
+		#		openvpn_name=$(echo $USER_VPN | awk -F'.-.' '{ print $1}')
+				
+		#		if [ "$openvpn_name" == "root" ]; then
+		#			continue
+		#		fi
+				
+		#		echo "openvpn_name=" $openvpn_name
+		#		if [ "$user" == "$openvpn_name" ];then 
+		#		same_flag="1"
+		#		break
+		#	fi
+								
+		#	done
+		#fi
+		
+		echo "same_flag=" $same_flag
+		
+		# delete proftpd user 
+		if [ "$same_flag" == "0" ];then
+			deluser $user
+		fi
+			
+	done
+	
+	cp /etc/shadow /tmp/shadow
+	cat /dev/null > /etc/shadow	
+	
+	for i in $(seq 1 5)
+    do
+		proftpd_enable=$(uci get proftpd.profile$i.enable)
+		
+		if [ "$proftpd_enable" == "0" ] || [ "$proftpd_enable" == "" ];then
+				continue;
+		fi 
+		
+		proftpd_name=$(uci get proftpd.profile$i.name)
+		proftpd_passwd=$(uci get proftpd.profile$i.password)
+		echo "proftpd_name=" $proftpd_name
+		echo "proftpd_passwd=" $proftpd_passwd
+		
+		#########################################
+		accountList_sys=$(awk -F':' '{ print $1}' /etc/passwd)
+		for etc_passwd in $accountList_sys
+		do
+			if [ "$etc_passwd" == "root" ] || [ "$etc_passwd" == "daemon" ] || [ "$etc_passwd" == "ftp" ] || [ "$etc_passwd" == "network" ] || [ "$etc_passwd" == "nobody" ]; then
+				continue
+			fi
+			if [ "$etc_passwd" == "$proftpd_name" ];then
+				deluser $proftpd_name
+			fi 
+				
+		done
+		#########################################
+		#etc_passwd=$(cat /etc/passwd | grep "$proftpd_name:")
+		#echo "etc_passwd=" $etc_passwd
+		
+		#if [ "$etc_passwd" != "" ];then
+		#	deluser $proftpd_name
+		#fi 
+			
+		adduser -S -H $proftpd_name
+		(echo $proftpd_passwd; sleep 1; echo $proftpd_passwd) | passwd $proftpd_name
+			
+	done
+	cp  /etc/shadow /var/shadow_proftp
+	cp  /tmp/shadow /etc/shadow
+	rm  /tmp/shadow
+			
+}
+	
+	
+proftp_brok_head() {
+    local allow_usb1_rx
+    local allow_usb1_tx
+    local allow_usb2_rx
+    local allow_usb2_tx
+    local allow_login
+    local name
+    local ar
+    local port
+    local limit
+    local connection
+	local DefaultAddress
+	local proftpd_enable
+	
+	DefaultAddress=$(ifconfig br-lan | grep "inet addr" | awk '{print $2}' | awk -F ":" '{print $2}')
+	echo "DefaultAddress=" $DefaultAddress
+	
+    config_get port $1 port
+    config_get connection $1 max_connection
+			
+    for i in $(seq 1 5)
+    do
+	  
+	  proftpd_enable=$(uci get proftpd.profile$i.enable)
+	  if [ "$proftpd_enable" == "0" ] || [ "$proftpd_enable" == "" ];then
+		continue;
+	  fi 
+	  
+	  name=$(uci_get proftpd profile$i name)
+	  ar=$(uci_get proftpd profile$i usb1_rw)
+	  [ $ar == "1" ] && allow_usb1_rx="$allow_usb1_rx $name,"
+	  [ $ar == "2" ] && {
+	  	allow_usb1_tx="$allow_usb1_tx $name,"
+		allow_usb1_rx="$allow_usb1_rx $name,"
+	  }
+	  ar=$(uci_get proftpd profile$i usb2_rw)
+	  [ $ar == "1" ] && allow_usb2_rx="$allow_usb2_rx $name," 
+	  [ $ar == "2" ] && {
+	  	allow_usb2_tx="$allow_usb2_tx $name," 
+	  	allow_usb2_rx="$allow_usb2_rx $name,"
+	  }
+	  ar=$(uci_get proftpd profile$i enable)
+	  [ $ar == "1" ] && allow_login="$allow_login $name,"
+    done
+		
+    sed -e "s#|PORT|#$port#g" \
+		-e "s#|DefaultAddress|#$DefaultAddress#g" \
+	    -e "s#|ALLOW_USB1_READ_USER|#$allow_usb1_rx#g" \
+	    -e "s#|ALLOW_USB1_WRITE_USER|#$allow_usb1_tx#g" \
+	    -e "s#|ALLOW_USB2_READ_USER|#$allow_usb2_rx#g" \
+	    -e "s#|ALLOW_USB2_WRITE_USER|#$allow_usb2_tx#g" \
+	    -e "s#|ALLOW_LOGIN_USER|#$allow_login#g" \
+	    -e "s#|MAX_CONNECTION|#$connection#g" \
+	    -e "/^.*AllowUser $/d" \
+	    /etc/proftpd.conf > /var/proftpd.conf
+	   
+    for i in $(seq 1 5)
+    do
+	  proftpd_enable=$(uci get proftpd.profile$i.enable)
+	  if [ "$proftpd_enable" == "0" ] || [ "$proftpd_enable" == "" ];then
+		continue;
+	  fi 
+	  name=$(uci_get proftpd profile$i name)
+      limit=$(uci_get proftpd profile$i downlo_speed)
+	  [ -z "$limit" ] && limit="0"
+      [ $limit != "0" ] && echo "TransferRate RETR $limit user $name" >> /var/proftpd.conf
+	  limit=$(uci_get proftpd profile$i uplo_speed)
+	  [ -z "$limit" ] && limit="0"
+      [ $limit != "0" ] && echo "TransferRate STOR $limit user $name" >> /var/proftpd.conf
+    done
+}
+
+start() {
+
+	local nom
+	local res
+	local user_NUM=6		
+	
+	config_load proftpd		
+	config_get enable global enable
+			
+	if [ "$enable" = "1" ]; then
+		
+		proftp_creat_user
+		proftp_brok_head global
+		
+		/usr/sbin/proftpd -c /var/proftpd.conf
+		
+		#[ ! -f $PID_F ] && $BIN
+		
+		
+	fi	
+
+}
+
+stop() {
+
+	ps | grep "proftpd:" | grep "grep" -v | awk '{print $1}' > /tmp/proftpd_pid
+	
+	proftpd_pid=$(cat /tmp/proftpd_pid)
+	echo "proftpd_pid=" $proftpd_pid
+	
+	[ -n "$proftpd_pid" ] && {
+
+		while read line
+		do
+		  kill $line
+		done < /tmp/proftpd_pid
+
+	}
+	#[ -f $PID_F ] && kill $(cat $PID_F)
+	#rm $PID_F
+	rm /tmp/proftpd_pid
+	
+}
+
+case "$1" in
+     "boot"|"start" )
+         start
+        ;;
+    "stop" )
+        stop
+        ;;
+    "restart" )
+	stop
+	start
+        ;;
+esac
+

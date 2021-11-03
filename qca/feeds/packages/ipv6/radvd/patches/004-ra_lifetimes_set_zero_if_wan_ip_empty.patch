@@ -1,0 +1,179 @@
+--- a/radvd.h
++++ b/radvd.h
+@@ -188,6 +188,11 @@ int yylex(void);
+ int check_ip6_forwarding(void);
+ void reload_config(void);
+ void reset_prefix_lifetimes(void);
++int check_wan_ip_empty(void);
++void set_prefix_lifetimes_to_zero(struct Interface *iface);
++void set_prefix_lifetimes_back(struct Interface *iface);
++int g_NeedSetRaltToZero;
++int g_HasSetRaltToZero;
+ 
+ /* timer.c */
+ struct timeval next_timeval(double next);
+--- a/send.c
++++ b/send.c
+@@ -18,6 +18,8 @@
+ #include "includes.h"
+ #include "radvd.h"
+ 
++g_NeedSetRaltToZero=0;
++g_HasSetRaltToZero=0;
+ /*
+  * Sends an advertisement for all specified clients of this interface
+  * (or via broadcast, if there are no restrictions configured).
+@@ -29,6 +31,19 @@
+ int
+ send_ra_forall(struct Interface *iface, struct in6_addr *dest)
+ {
++	g_NeedSetRaltToZero = check_wan_ip_empty();
++
++	if (g_NeedSetRaltToZero != g_HasSetRaltToZero) {
++
++		if (g_NeedSetRaltToZero == 1) {
++			set_prefix_lifetimes_to_zero(iface);
++		} else {
++			set_prefix_lifetimes_back(iface);
++		}
++
++		g_HasSetRaltToZero = g_NeedSetRaltToZero;
++	}
++
+ 	struct Clients *current;
+ 
+ 	/* If no list of clients was specified for this interface, we broadcast */
+@@ -66,6 +81,133 @@ send_ra_forall(struct Interface *iface, 
+ 	return 0;
+ }
+ 
++int check_wan_ip_empty(void)
++{
++	system("uci get network.general.wan6rd_enable > /tmp/wan6rd_enable");
++	system("uci get network.general.wan6to4_enable > /tmp/wan6to4_enable");
++	system("uci get dhcp6c.basic.ifname > /tmp/curr_wan_ifname");
++
++	// chk if 6rd is enabled.
++	FILE *fp_6rdenable = NULL;
++	char m_6rdenable[50] = "";
++	if((fp_6rdenable = fopen("/tmp/wan6rd_enable", "r")) == NULL ){
++		fprintf(stderr, "fail to open tmpwan6rd_enable file\n");
++		exit(1);
++	}
++	fscanf(fp_6rdenable,"%s",m_6rdenable);
++	fclose(fp_6rdenable);
++
++	// chk if 6to4 is enabled.
++	FILE *fp_6to4enable = NULL;
++	char m_6to4enable[50] = "";
++	if((fp_6to4enable = fopen("/tmp/wan6to4_enable", "r")) == NULL ){
++		fprintf(stderr, "fail to open tmpwan6to4_enable file\n");
++	}else {
++		fscanf(fp_6to4enable,"%s",m_6to4enable);
++		fclose(fp_6to4enable);
++	}
++
++	// get current WAN ifname.
++	FILE *fp_ifname = NULL;
++	char m_ifname[50] = "";
++	if((fp_ifname = fopen("/tmp/curr_wan_ifname", "r")) == NULL ){
++		fprintf(stderr, "fail to open tmpcurr_wan_ifname file\n");
++		exit(1);
++	}
++	fscanf(fp_ifname,"%s",m_ifname);
++	fclose(fp_ifname);
++
++	char m_msg[100] = "";
++	if ( (strstr(m_6rdenable, "1") != NULL) || (strstr(m_6to4enable, "1") != NULL) ) {
++		return 0; // don't care 6rd, for now.
++		snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep 'inet ' |awk '{print $2}' > /tmp/wanip\n", m_ifname); // 6rd is ENABLED/6to4 is ENABLED
++	} else {
++		snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep Global |awk '{print $3}' > /tmp/wanip\n", m_ifname);
++	}
++	system(m_msg);
++
++	// chk wan ip.
++	FILE *fp_wanip = NULL;
++	char m_wanip[50] = "";
++
++	if((fp_wanip = fopen("/tmp/wanip", "r")) == NULL ){
++		fprintf(stderr, "fail to open tmpwanip file\n");
++		exit(1);
++	}
++	fscanf(fp_wanip,"%s",m_wanip);
++	fclose(fp_wanip);
++
++	if ( strstr(m_wanip, ":") == NULL ) {
++		return 1; // wanip EMPTY.
++	} else {
++		return 0; // wanip EXIST.
++	}
++}
++
++void set_prefix_lifetimes_to_zero(struct Interface *iface)
++{
++	struct AdvPrefix *prefix;
++	char pfx_str[INET6_ADDRSTRLEN];
++
++
++	flog(LOG_INFO, "Resetting prefix lifetimes");
++
++	if (!iface) return;
++
++	for (iface; iface; iface = iface->next)
++	{
++		if (!iface) return;
++
++		iface->AdvDefaultLifetime = 0;
++
++		for (prefix = iface->AdvPrefixList; prefix;
++							prefix = prefix->next)
++		{
++			if (!prefix)return;
++
++			print_addr(&prefix->Prefix, pfx_str);
++			dlog(LOG_DEBUG, 4, "%s/%u%%%s plft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_preferredlft, prefix->AdvPreferredLifetime);
++			dlog(LOG_DEBUG, 4, "%s/%u%%%s vlft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_validlft, prefix->AdvValidLifetime);
++			prefix->curr_validlft =
++					0;
++			prefix->curr_preferredlft =
++					0;
++		}
++
++	}
++
++}
++
++void set_prefix_lifetimes_back(struct Interface *iface)
++{
++	struct AdvPrefix *prefix;
++	char pfx_str[INET6_ADDRSTRLEN];
++
++
++	flog(LOG_INFO, "Resetting prefix lifetimes");
++
++	if (!iface) return;
++
++	for (iface; iface; iface = iface->next)
++	{
++		if (!iface) return;
++
++		for (prefix = iface->AdvPrefixList; prefix;
++							prefix = prefix->next)
++		{
++			if (!prefix) return;
++
++			print_addr(&prefix->Prefix, pfx_str);
++			dlog(LOG_DEBUG, 4, "%s/%u%%%s plft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_preferredlft, prefix->AdvPreferredLifetime);
++			dlog(LOG_DEBUG, 4, "%s/%u%%%s vlft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_validlft, prefix->AdvValidLifetime);
++			prefix->curr_validlft =
++					prefix->AdvValidLifetime;
++			prefix->curr_preferredlft =
++					prefix->AdvPreferredLifetime;
++		}
++	}
++}
++
+ static void
+ send_ra_inc_len(size_t *len, int add)
+ {

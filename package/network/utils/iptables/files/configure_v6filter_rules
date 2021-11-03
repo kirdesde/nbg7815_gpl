@@ -1,0 +1,131 @@
+#!/bin/sh
+## Configure Firewall Rules
+
+LAN="br+"
+
+count=`uci get firewall6.general.rules_count`
+ruleid=1
+
+## set default action of firewall to DROP ##
+ip6tables -P FORWARD DROP
+ip6tables -P INPUT DROP
+## allows traffic for ppp link
+ip6tables -D INPUT -s fe80::/10 -j ACCEPT
+ip6tables -D FORWARD -s fe80::/10 -j ACCEPT
+ip6tables -I INPUT -s fe80::/10 -j ACCEPT
+ip6tables -I FORWARD -s fe80::/10 -j ACCEPT
+ip6tables -N input_advertisement
+ip6tables -N forwarding_advertisement
+## for RA(not ppp), allows packet coming
+ip6tables -I forwarding_advertisement -p ipv6-icmp --icmpv6-type router-advertisement -j ACCEEPT
+ip6tables -I input_advertisement -p ipv6-icmp --icmpv6-type router-advertisement -j ACCEEPT
+## for DHCPv6 Advertisement(not ppp), allows packet coming
+ip6tables -I forwarding_advertisement -m tcp -p tcp --dport 546 --sport 547 -j ACCEPT
+ip6tables -I forwarding_advertisement -m udp -p udp --dport 546 --sport 547 -j ACCEPT
+ip6tables -I input_advertisement -m tcp -p tcp --dport 546 --sport 547 -j ACCEPT 
+ip6tables -I input_advertisement -m udp -p udp --dport 546 --sport 547 -j ACCEPT
+## should not receive RA from lan side
+ip6tables -D INPUT -p icmpv6 --icmpv6-type router-advertisement -i br-lan -j DROP
+ip6tables -I INPUT -p icmpv6 --icmpv6-type router-advertisement -i br-lan -j DROP
+
+filterEnabled=`uci get firewall6.general.filterEnabled` 
+if [ "$filterEnabled" = "1" ] ; then   
+	## firewall
+    	ip6tables -N input_rule
+    	ip6tables -N forwarding_rule_filter
+    
+    	## lan and local traffic must be accepted by default if there is not any exception rule. Otherwise, set default action 
+    	## to ACCEPT, which will be done in /lib/firewall/iptables_app_order
+    	if [ $count -eq 0 ] ; then
+    		ip6tables -N lan_local_default
+		ip6tables -A lan_local_default -i $LAN -j ACCEPT
+		ip6tables -A lan_local_default -i lo -j ACCEPT
+	fi
+
+	target=`uci get firewall6.general.target | tr '[a-z]' '[A-Z]'`
+
+	while [ "$ruleid" -le "$count" ]
+	do
+	  StatusEnable=`uci get firewall6.rule$ruleid.StatusEnable`
+	  if [ "$StatusEnable" = "1" ] ; then
+	        type=`uci get firewall6.rule$ruleid.type`
+	        service=`uci get firewall6.rule$ruleid.service`
+	        dstip=`uci get firewall6.rule$ruleid.dst_ip`
+	        srcip=`uci get firewall6.rule$ruleid.src_ip`
+	        time=`uci get firewall6.rule$ruleid.time`
+#	        target=`uci get firewall6.rule$ruleid.target`
+		mac_address=`uci get firewall6.rule$ruleid.mac_address`
+	
+			if [ -z $mac_address ];then
+				mac=""
+				else
+					case $mac_address in
+					00:00:00:00:00:00) mac="";;
+					*) mac="-m mac --mac-source $mac_address";;
+				esac
+			fi
+	
+	        case $service in
+	            any) proto="";;
+	            *)
+					protocol=`uci get firewall6.rule$ruleid.protocol`
+					dFromPort=`uci get firewall6.rule$ruleid.dFromPort`
+					dToPort=`uci get firewall6.rule$ruleid.dToPort`
+					sFromPort=`uci get firewall6.rule$ruleid.sFromPort`
+					sToPort=`uci get firewall6.rule$ruleid.sToPort`
+	   
+					case $protocol in
+						TCP|UDP) 
+					
+							if [ -z $sFromPort ]; then
+								sFromPort_rule=""
+							else
+								sFromPort_rule="--sport $sFromPort"
+							fi
+						
+							if [ -z $sToPort ]; then
+								sToPort_rule=""
+							else
+								sToPort_rule=":$sToPort"
+							fi
+						
+							if [ -z $dFromPort ]; then
+								dFromPort_rule=""
+							else
+								dFromPort_rule="--dport $dFromPort"
+							fi
+						
+							if [ -z $dToPort ]; then
+								dToPort_rule=""
+							else
+								dToPort_rule=":$dToPort"
+							fi				
+		
+							proto="-p $protocol $sFromPort_rule$sToPort_rule $dFromPort_rule$dToPort_rule";;
+						ICMPv6) proto="-p ipv6-icmp";;
+					esac 
+	        esac
+	
+	      
+	        case $dstip in
+	                ::) dest="";;
+	                *) dest="-d $dstip";;
+	        esac
+	        case $srcip in
+	                ::) src="";;
+	                *) src="-s $srcip";;
+	        esac
+	
+	        ip6tables -A forwarding_rule_filter $proto $schedule $src $dest $mac -j $target
+	        ip6tables -A input_rule $proto $schedule $src $dest $mac -j $target
+	  fi
+	  ruleid=`expr $ruleid + 1`
+	done
+else
+    ## lan and local traffic must be accepted by default if there is not any exception rule
+	ip6tables -N lan_local_default
+	ip6tables -A lan_local_default -i $LAN -j ACCEPT
+	ip6tables -A lan_local_default -i lo -j ACCEPT
+
+fi
+

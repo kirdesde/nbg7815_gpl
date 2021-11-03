@@ -1,0 +1,53 @@
+--- a/dhcp6s.c	2017-05-16 10:05:06.705323400 +0800
++++ b/dhcp6s.c	2017-05-16 16:37:43.316979417 +0800
+@@ -126,6 +126,7 @@
+ static int debug = 0;
+ static sig_atomic_t sig_flags = 0;
+ #define SIGF_TERM 0x1
++#define SIGF_HUP 0x2
+ 
+ const dhcp6_mode_t dhcp6_mode = DHCP6_MODE_SERVER;
+ char *device = NULL;
+@@ -582,6 +583,11 @@
+ 		    strerror(errno));
+ 		exit(1);
+ 	}
++	if (signal(SIGHUP, server6_signal) == SIG_ERR) {
++		dprintf(LOG_WARNING, FNAME, "failed to set signal: %s",
++		    strerror(errno));
++		exit(1);
++	}
+ 	return;
+ }
+ 
+@@ -592,6 +598,12 @@
+ 		unlink(pid_file);
+ 		exit(0);
+ 	}
++		if ((sig_flags & SIGF_HUP)) {
++		dprintf(LOG_INFO, FNAME, "dhcp6s reload");
++		server6_reload();
++	}
++
++	sig_flags = 0;
+ }
+ 
+ static void
+@@ -602,7 +614,6 @@
+ 	fd_set r;
+ 	int maxsock;
+ 
+-	
+ 	while (1) {
+ 		if (sig_flags)
+ 			process_signals();
+@@ -2713,6 +2724,9 @@
+ 	case SIGTERM:
+ 		sig_flags |= SIGF_TERM;
+ 		break;
++	case SIGHUP:
++		sig_flags |= SIGF_HUP;
++		break;
+ 	}
+ }
+ 

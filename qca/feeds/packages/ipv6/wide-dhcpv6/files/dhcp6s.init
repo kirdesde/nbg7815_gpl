@@ -1,0 +1,269 @@
+#!/bin/sh /etc/rc.common 
+
+get_ifname() {
+	local interface=$1
+	local ifname
+	scan_interfaces
+	config_get ifname "$interface" ifname
+	printf '%s\n' "$ifname"
+	return 0
+}
+
+dhcp6s_write_duid() {
+	local mac="${1:-$(ifconfig br-lan | sed -ne 's/[[:space:]]*$//; s/.*HWaddr //p')}"
+	#local mac="${1:-$(ifconfig "$client_device" | sed -ne 's/[[:space:]]*$//; s/.*HWaddr //p')}"
+	local pat="[0-9A-F][0-9A-F]"
+
+	case "$mac" in
+		# exactly 6 octets -> assume type 3 (DUID-LL - RFC3315, 9.4)
+		$pat:$pat:$pat:$pat:$pat:$pat)
+			local oIFS="$IFS"; IFS=":"; set -- $mac; IFS="$oIFS"
+
+			duid_mode=$(uci get dhcp6s.basic.duid_mode)
+			[ -z "$duid_mode" ] && duid_mode="DUID-LLT"
+			# duidtype (0001 -> DUID-LLT, 0003 -> DUID-LL (dhcp6c default used))
+			if [ "$duid_mode" == "DUID-LLT" ];then
+				printf \\x00\\x01
+			else
+				printf \\x00\\x03
+			fi
+			
+			# hardwaretype
+			printf \\x00\\x01
+			
+			# timestamp
+			timestamp=""
+			TS1=""
+			TS2=""
+			TS3=""
+			TS4=""
+			if [ "$duid_mode" == "DUID-LLT" ];then
+				usedduidlltvalue=$(uci get dhcp6s.basic.duid_llt_value)
+				if [ -n "$usedduidlltvalue" ];then
+					timestamp="$usedduidlltvalue"
+				else
+					timestamp=$(printf "%x\n" $(date +"%s"))
+					uci set dhcp6s.basic.duid_llt_value="$timestamp"
+					uci commit dhcp6s
+				fi
+				TS1=${timestamp:0:2}
+				TS2=${timestamp:2:2}
+				TS3=${timestamp:4:2}
+				TS4=${timestamp:6:2}
+				printf \\x$TS1\\x$TS2\\x$TS3\\x$TS4
+			fi
+			
+			# link-local address
+			printf \\x$1\\x$2\\x$3\\x$4\\x$5\\x$6
+			
+			# logger
+			if [ "$duid_mode" == "DUID-LLT" ];then
+				logger -t dhcp6s "Using MAC address DUID-LLT 00:01:00:01:$TS1:$TS2:$TS3:$TS4:$1:$2:$3:$4:$5:$6"
+			else
+				logger -t dhcp6s "Using MAC address DUID-LL 00:03:00:01:$1:$2:$3:$4:$5:$6"
+			fi
+		;;
+		# at least 7 octets -> could be type 1 or type 2
+		$pat:$pat:$pat:$pat:$pat:$pat:*)
+			local len_id=":$(echo "$mac" | sed -e 's/[^:]//g')"
+			local len_hi=$(printf "%02x" $((${#len_id} / 0xFF)) )
+			local len_lo=$(printf "%02x" $((${#len_id} % 0xFF)) )
+
+			# low endian
+			if [ "$(printf \\1 | hexdump -n1 -ve '8/2 "" "%04x" ""')" = "0001" ]; then
+				printf \\x$len_lo\\x$len_hi
+
+			# big endian
+			else
+				printf \\x$len_hi\\x$len_lo
+			fi
+
+			printf $(echo "$mac" | sed -e 's/^/\\x/; s/:/\\x/g')
+			logger -t dhcp6s "Using user provided DUID $mac"
+		;;
+		*)
+			logger -t dhcp6s "Unable to derive DUID from interface 'lan' and no valid user DUID given"
+		;;
+	esac
+}
+
+radvd_copy_radvd_uci_lifetimes_to_set_dhcp6s_lifetimes() {
+	local plt=$(uci get radvd.prefix.AdvPreferredLifetime)
+	local vlt=$(uci get radvd.prefix.AdvValidLifetime)
+    	local dftLTs=300
+    	local writeplt=-1
+    	local writevlt=-1
+
+	uci delete dhcp6s.basic.preferredLifetime
+	uci delete dhcp6s.basic.validLlifetime
+	[ "$plt" ] && writeplt=$plt || writeplt=$dftLTs
+	[ "$vlt" ] && writevlt=$vlt || writevlt=$dftLTs
+    	uci set dhcp6s.basic.preferredLifetime=$writeplt
+    	uci set dhcp6s.basic.validLlifetime=$writevlt
+	uci commit dhcp6s
+}
+
+start() {
+	[ ! -e /etc/dhcp6sctlkey ] && `dd if=/dev/urandom count=1 2> /dev/null | md5sum | cut -d" " -f1 > /etc/dhcp6sctlkey`
+
+	local isrun=$(ps |grep "dhcp6s" |grep -v grep)
+	[ -e "$isrun" ] && return 0
+	rm /var/run/dhcp6s.pid
+
+	include /lib/network
+
+    	## Bypass IA_PD lifetimes from WAN to LAN.2016.1007.forCeLogo.wenhsien.
+    	radvd_copy_radvd_uci_lifetimes_to_set_dhcp6s_lifetimes
+
+	config_load "dhcp6s"
+	
+	local enabled
+	config_get_bool enabled basic enabled 0
+	[ $enabled -eq 0 ] && {
+		return 0	
+	}
+
+    	## Update DNSv6 in Runtime.
+    local dnsv6update=$(uci get radvd.interface.dnsv6update)
+    [ $dnsv6update -eq 1 ] && {
+       	## Flag off dnsv6update.
+       	$(uci set radvd.interface.dnsv6update=0)
+       	
+       	## Opposite M flag value back.
+       	local currMflag=$(uci get radvd.interface.AdvManagedFlag)
+       	[ $currMflag -eq 1 ] && {
+       	    $(uci set radvd.interface.AdvManagedFlag=0)
+       	} || {
+       	    $(uci set radvd.interface.AdvManagedFlag=1)
+       	}
+        	
+		## radvd script would check the static mode on LAN
+		/etc/init.d/radvd reload config ##Only reload radvd config.
+		## No need to going down this dhcp6s shell script.
+       	return 0
+    }
+	local ck6rd=$(uci get network.general.wan6rd_enable)
+	local ck6to4=$(uci get network.general.wan6to4_enable)
+	local ck6in4=$(uci get network.general.wan6in4_enable)
+	
+	logger starting dhcp6s
+	
+	local server_interface 
+	config_get server_interface basic interface
+	local server_ifname=$(get_ifname "$server_interface")
+	
+	local config_file
+	config_get config_file basic config_file
+	
+	# load server duid from uci conf. file, or generate one then save it into tmp file and uci conf. file.
+	local user_duid
+	config_get user_duid basic duid
+	local duid_file="/var/dhcp6s_duid"
+	dhcp6s_write_duid "$user_duid" > $duid_file
+	
+	# clean dhcp6s configuration file first.
+	rm -rf $config_file
+	
+	# add domain search list
+	local domain_name=$(uci get dhcp6s.basic.domain_name)
+	[ -n "$domain_name" ] && {
+		echo "option domain-name \"$domain_name\";" >> $config_file
+	}
+
+	# add DNS
+	local domain_name_server1
+	local domain_name_server2
+	local domain_name_server3
+
+	if [ "$ck6rd" == "1" ]; then
+		domain_name_server1=$(uci get network.wan6rd.PriDns)
+		domain_name_server2=$(uci get network.wan6rd.SecDns)
+		domain_name_server3=$(uci get network.wan6rd.ThiDns)
+	elif [ "$ck6to4" == "1" ]; then
+		domain_name_server1=$(uci get network.wan6to4.PriDns)
+		domain_name_server2=$(uci get network.wan6to4.SecDns)
+		domain_name_server3=$(uci get network.wan6to4.ThiDns)
+	elif [ "$ck6in4" == "1" ]; then
+		domain_name_server1=$(uci get network.wan6in4.PriDns)
+		domain_name_server2=$(uci get network.wan6in4.SecDns)
+		domain_name_server3=$(uci get network.wan6in4.ThiDns)
+	else
+		config_get domain_name_server1 basic domain_name_server1
+		config_get domain_name_server2 basic domain_name_server2
+		config_get domain_name_server3 basic domain_name_server3
+	fi
+
+	domain_name_server1="${domain_name_server1%%/*}"
+	domain_name_server2="${domain_name_server2%%/*}"
+	domain_name_server3="${domain_name_server3%%/*}"
+
+	local range_start=$(uci get dhcp6s.basic.addrstart)
+	local range_end=$(uci get dhcp6s.basic.addrend)
+	local lifetime=$(uci get dhcp6s.basic.lifetime)
+	local ULA=$(uci get network.general.ULA)
+	ipv6_address=$(ifconfig br-lan | grep "Scope:Global"| awk -F ' ' '{ print $3}')
+	[ "$ipv6_address" == "" ] && PD="" || PD=$(expand_ipv6 $ipv6_address | awk -F':' '{print $1":"$2":"$3":"$4}')
+	echo $PD >/tmp/Ipv6LANPD
+	echo "option domain-name-servers $domain_name_server1 $domain_name_server2 $domain_name_server3;" >> $config_file
+	
+	# add client IP address related information
+	local v6addrinfo="1"
+	local mflag="0"
+	mflag=$(uci get radvd.interface.AdvManagedFlag)
+	[ -n "$mflag" -a "$mflag" = "0" ] && {
+		v6addrinfo="0"
+	}
+	[ "$v6addrinfo" = "1" ] && {
+		#echo "#####DHCP parameter#########" >> $config_file
+		echo "interface br-lan {" >> $config_file
+		echo "        address-pool pool1 $lifetime;" >> $config_file
+		echo "};" >> $config_file
+		[ "$ULA" == "1" ] && {        
+			echo "pool pool1 {" >> $config_file
+			echo "        range fd00::$range_start to fc00::$range_end ;" >> $config_file
+			echo "};" >> $config_file
+		} || {
+			echo "pool pool1 {" >> $config_file
+			echo "        range $PD::$range_start to $PD::$range_end ;" >> $config_file
+			echo "};" >> $config_file
+		}
+	}
+
+	[ ! -e $config_file ] && return 1
+
+	local debug
+	local debug_option
+	config_get_bool debug basic debug 0
+	[ $debug -eq 1 ] && debug_option="-D"
+
+	local isrun=$(ps -ww |grep "/usr/sbin/dhcp6s -c" |grep -v grep)
+	[ -n "$isrun" ] && {
+		## if the daemon is alive, only reload the config.
+		pkill -HUP dhcp6s
+	} || {
+		/usr/sbin/dhcp6s -c $config_file $debug_option $server_ifname &
+	}
+	
+	return 0
+	
+}
+
+stop() {
+	logger stopping dhcp6s
+#	kill -TERM `cat /var/run/dhcp6s.pid`
+	killall dhcp6s
+	rm /var/run/dhcp6s.pid
+
+	## kill -TERM  =>  kill -15 , must wait, or start() will fail !!
+	sleep 1
+	return 0
+	
+}
+
+reload() {
+	if [ "$1" == "config" ]; then
+		start $1
+	else
+		restart
+	fi
+}

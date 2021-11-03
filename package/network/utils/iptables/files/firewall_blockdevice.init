@@ -1,0 +1,81 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2018 Zyxel
+
+START=97
+
+##check mode,if AP/UR,exit
+sys_mode=$(get_sys_mode)
+op_role=$(uci get system.main.operation_role)
+[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] && [ "$op_role" != "controller" ] && exit 0
+
+reorganize_firewall_blockdevice_rule() {	
+  #clean expired and delete = 1 data
+  count=$(uci get firewall_blockdevice.general.rules_count)
+  now=$(date +%s)
+  i=1
+  while [ $i -le "$count" ]
+  do
+    stoptimestamp=$(uci get firewall_blockdevice.rule$i.timestamp)
+    state=$(uci get firewall_blockdevice.rule$i.state)
+    delete=$(uci get firewall_blockdevice.rule$i.delete)
+    if ([ "$delete" = "1" ]) || ([ -n "$stoptimestamp" ] && [ "$stoptimestamp" != 0 ] && [ "$now" -ge "$stoptimestamp" ]); then #expire
+      if [ "$delete" = "1" ] || [ "$state" = "Block" ]; then
+        ruleid=$i
+        uci del firewall_blockdevice.rule$ruleid
+        while [ $ruleid -lt "$count" ]
+        do
+          #move rule
+          uci rename firewall_blockdevice.rule$((ruleid + 1))=rule$ruleid
+          uci set firewall_blockdevice.rule$ruleid.CurPos=$ruleid
+          ruleid=$((ruleid + 1))
+        done
+        count=$((count - 1))
+        ruleid=$((ruleid - 1))
+        uci set firewall_blockdevice.general.rules_count=$count
+        uci set firewall_blockdevice.general.NextRulePos=$((count + 1))
+
+      elif [ "$state" = "Allow" ]; then
+        uci set firewall_blockdevice.rule$i.state="Block"
+        uci set firewall_blockdevice.rule$i.timestamp="0"
+      fi
+      uci commit firewall_blockdevice
+    else # no expire and delete = 0
+      i=$((i + 1))
+    fi
+  done
+}
+
+restart() {
+  reorganize_firewall_blockdevice_rule
+  /sbin/firewall_blockdevice restart
+  ## iptables app reorder
+  /lib/firewall/iptables_app_order
+  /lib/firewall/ip6tables_app_order
+}
+
+boot() {
+  reorganize_firewall_blockdevice_rule
+  /sbin/firewall_blockdevice init
+  ## iptables app reorder
+  /lib/firewall/iptables_app_order
+  /lib/firewall/ip6tables_app_order
+}
+
+start() {
+  reload
+}
+
+stop() {
+  /sbin/firewall_blockdevice stop
+}
+
+reload() {
+  reorganize_firewall_blockdevice_rule
+  /sbin/firewall_blockdevice reload
+  check=$(/sbin/firewall_blockdevice check)
+  if [ "$check" = "chainNotExist" ]; then ##user chain was not exist in FORWARD or INPUT table.
+    /lib/firewall/iptables_app_order
+    /lib/firewall/ip6tables_app_order
+  fi
+}
+

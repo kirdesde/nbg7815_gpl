@@ -1,0 +1,86 @@
+--- a/dhcp6.h
++++ b/dhcp6.h
+@@ -188,6 +188,7 @@
+ 	int pref;		/* server preference */
+ 	int32_t elapsed_time;	/* elapsed time (from client to server only) */
+ 	int64_t refreshtime;	/* info refresh time for stateless options */
++	int32_t max_rt;
+ 
+ 	struct dhcp6_list iapd_list; /* list of IA_PD */
+ 	struct dhcp6_list iana_list; /* list of IA_NA */
+@@ -318,7 +319,7 @@
+ #define DH6OPT_REMOTE_ID 37
+ #define DH6OPT_SUBSCRIBER_ID 38
+ #define DH6OPT_CLIENT_FQDN 39
+-
++#define DH6OPT_SOL_MAX_RT 82
+ /* The followings are KAME specific. */
+ 
+ struct dhcp6opt {
+
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -1579,6 +1579,18 @@
+ 		dprintf(LOG_ERR, FNAME, "failed to copy requested options");
+ 		goto end;
+ 	}
++	/*Kerker 2016/02/04
++	 *	SOL_MAX_RT
++	 */
++	if(dh6->dh6_msgtype == DH6_SOLICIT){
++		u_int16_t RT_TEST=DH6OPT_SOL_MAX_RT;
++		if (dhcp6_add_listval(&optinfo.reqopt_list, DHCP6_LISTVAL_NUM,
++	    	&RT_TEST, NULL) == NULL) {
++			dprintf(LOG_NOTICE, FNAME, "failed to make SOL_MAX_RT");
++			return;
++		}
++	}
++
+ 
+ 	/* configuration information specified as event data */
+ 	for (evd = TAILQ_FIRST(&ev->data_list); evd;
+@@ -1844,7 +1856,10 @@
+ 		dprintf(LOG_INFO, FNAME, "failed to process authentication");
+ 		return (-1);
+ 	}
+-
++	/*SOL_MAX_RT*/
++	if(optinfo->max_rt){
++		ev->max_retrans_time=optinfo->max_rt*1000;
++	}
+ 	/*
+ 	 * The requesting router MUST ignore any Advertise message that
+ 	 * includes a Status Code option containing the value NoPrefixAvail
+
+--- a/common.c
++++ b/common.c
+@@ -1640,6 +1640,20 @@
+ 			memcpy(optinfo->relaymsg_msg, cp, optlen);
+ 			optinfo->relaymsg_len = optlen;
+ 			break;
++		case DH6OPT_SOL_MAX_RT:
++			/*Kerker 2016/02/04
++			 *	SOL_MAX_RT
++			 */
++			if (optlen != 4)
++				goto malformed;
++			memcpy(&val32, cp, sizeof(val32));
++			val32 = ntohs(val32);
++			if(val32<60||val32>86400){
++				optinfo->max_rt=(SOL_MAX_RT / 1000);
++			}else{
++				optinfo->max_rt = val32;
++			}
++			break;
+ 		case DH6OPT_AUTH:
+ 			if (optlen < sizeof(struct dhcp6opt_auth) - 4)
+ 				goto malformed;
+@@ -3102,6 +3116,8 @@
+ 		return ("subscriber ID");
+ 	case DH6OPT_CLIENT_FQDN:
+ 		return ("client FQDN");
++	case DH6OPT_SOL_MAX_RT:
++		return ("SOL_MAX_RT");
+ 	default:
+ 		snprintf(genstr, sizeof(genstr), "opt_%d", type);
+ 		return (genstr);

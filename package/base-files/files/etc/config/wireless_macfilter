@@ -1,0 +1,13 @@
+config device 'wifi1'
+	#2.4G
+	#filter_action 0:disable 1:allow 2:deny
+	#ex:list mac '001122334455'
+	option filter_action '0'
+
+config device 'wifi0'
+	#5G LOW
+	option filter_action '0'
+
+config device 'wifi2'
+	#5G HIGH
+	option filter_action '0'

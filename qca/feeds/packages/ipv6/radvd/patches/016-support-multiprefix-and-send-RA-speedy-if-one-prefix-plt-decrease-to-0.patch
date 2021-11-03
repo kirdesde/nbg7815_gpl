@@ -1,0 +1,207 @@
+--- a/send.c
++++ b/send.c
+@@ -623,6 +623,7 @@ send_ra(struct Interface *iface, struct 
+ 	 *	add prefix options
+ 	 */
+ 
++	int IsAnyPrefixEnable = 0;
+ 	while(prefix)
+ 	{
+ 		if( prefix->enabled )
+@@ -659,25 +660,25 @@ send_ra(struct Interface *iface, struct 
+ 
+ 					if (prefix->curr_preferredlft == 0) {
+ 						cease_adv_pfx_msg(iface->Name, &prefix->Prefix, prefix->PrefixLen);
+-
+-						// RFC7084: L-4: An IPv6 CE router MUST NOT advertise itself as a default
+-						//               router with a Router Lifetime [RFC4861] greater than zero if
+-						//               it has no prefixes configured or delegated to it.
+-						radvert->nd_ra_router_lifetime = 0;
++					} else {
++						IsAnyPrefixEnable = 1;
+ 					}
+ 				}
+ 				pinfo->nd_opt_pi_valid_time	= htonl(prefix->curr_validlft);
+ 				pinfo->nd_opt_pi_preferred_time = htonl(prefix->curr_preferredlft);
+-
+ 			}
+ 			pinfo->nd_opt_pi_reserved2	= 0;
+-
+ 			memcpy(&pinfo->nd_opt_pi_prefix, &prefix->Prefix,
+ 			       sizeof(struct in6_addr));
+ 		}
+-
+ 		prefix = prefix->next;
+ 	}
++	if (0 == IsAnyPrefixEnable) {
++		// RFC7084: L-4: An IPv6 CE router MUST NOT advertise itself as a default
++		//               router with a Router Lifetime [RFC4861] greater than zero if
++		//               it has no prefixes configured or delegated to it.
++		radvert->nd_ra_router_lifetime = 0;
++	}
+ 
+ 	route = iface->AdvRouteList;
+ 
+--- a/radvd.c
++++ b/radvd.c
+@@ -104,6 +104,8 @@ void set_prefix_back_to_new(void);
+ int pd_change_flag_on(void);
+ int is_old_new_prefix_exist_and_diff(void);
+ int initiativeCheckLifetime();
++int onePrefixExpiredCurrently();
++void prefixExipreSendRaImmediately();
+ 
+ int
+ main(int argc, char *argv[])
+@@ -339,7 +341,6 @@ main(int argc, char *argv[])
+ 			perror("log_open");
+ 			exit(1);
+ 		}
+-
+ 	}
+ 
+ 	/*
+@@ -486,13 +487,16 @@ void main_loop(void)
+ 		if (time_in_micros - g_lastChkWanCable_time_in_micros > 2000000) {
+ 			g_lastChkWanCable_time_in_micros = time_in_micros;
+ 			//2015/09/22 Niko add, call kickoff_adverts if need send RA
+-			if ( initiativeCheckLifetime()==1 )
++			if (1 == initiativeCheckLifetime())
+ 			{
+ 				kickoff_adverts();
+ 			}
+-		}
+-
+ 
++			if (1 == onePrefixExpiredCurrently())
++			{
++				prefixExipreSendRaImmediately();
++			}
++		}
+ 	}
+ }
+ 
+@@ -1231,3 +1235,113 @@ int initiativeCheckLifetime()
+ 	return 0;
+ }
+ 
++static time_t
++time_diff_secs2(const struct timeval *time_x, const struct timeval *time_y)
++{
++	time_t secs_diff;
++
++	secs_diff = time_x->tv_sec - time_y->tv_sec;
++	if ((time_x->tv_usec - time_y->tv_usec) >= 500000)
++	{
++		secs_diff++;
++	}
++
++	return secs_diff;
++}
++
++static void
++decrement_lifetime2(const time_t secs, uint32_t *lifetime)
++{
++	if (*lifetime > secs)
++	{
++		*lifetime -= secs;
++	}
++	else
++	{
++		*lifetime = 0;
++	}
++}
++
++int
++onePrefixExpiredCurrently()
++{
++	int result = 0;
++	struct Interface *iface;
++	struct AdvPrefix *prefix;
++
++	for(iface=IfaceList;
++		iface;
++		iface=iface->next)
++	{
++		double next;
++
++		if (iface->UnicastOnly) continue;
++		if (!iface->AdvSendAdvert) continue;
++
++		for(prefix = iface->AdvPrefixList;
++			prefix;
++			prefix = prefix->next)
++		{
++			struct timeval time_now;
++			time_t secs_since_last_ra = 7;
++
++			gettimeofday(&time_now, NULL);
++			secs_since_last_ra = time_diff_secs2(&time_now, &iface->last_ra_time);
++			if (secs_since_last_ra < 0)
++			{
++				secs_since_last_ra = 0;
++			}
++
++			uint32_t CURR_PLT = prefix->curr_preferredlft;
++
++			decrement_lifetime2(secs_since_last_ra, &CURR_PLT);
++			if (CURR_PLT == 0)
++			{
++				/*
++				 *	if prefix count down to zero just now,
++				 *	need to send RA to notice clients.
++				 *
++				 *	but if prefix has already count down to zero for a long time,
++				 *	no need to send RA again and again.
++				 */
++				if ( prefix->last_time_pollinged_preferredlft > 0 )
++				{
++					result = 1;
++					prefix->last_time_pollinged_preferredlft = 0;
++				}
++				// else case COULD NOT set result to zero !!!!
++			}
++			else
++			{
++				prefix->last_time_pollinged_preferredlft = (int)CURR_PLT;
++			}
++		}
++	}
++
++	return result;
++}
++
++void
++prefixExipreSendRaImmediately()
++{
++	struct Interface *iface;
++
++	/*
++	 *	send initial advertisement and set timers
++	 */
++	for(iface=IfaceList;
++		iface;
++		iface=iface->next)
++	{
++		double next = 0;
++
++		if (iface->UnicastOnly) continue;
++		/* send an initial advertisement */
++		if (send_ra_forall(iface, NULL) == 0)
++		{
++			iface->init_racount++;
++			next = min(MAX_INITIAL_RTR_ADVERT_INTERVAL, iface->MaxRtrAdvInterval);
++			iface->next_multicast = next_timeval(next);
++		}
++	}
++}
+--- a/radvd.h
++++ b/radvd.h
+@@ -110,6 +110,7 @@ struct AdvPrefix {
+ 
+ 	uint32_t		curr_validlft;
+ 	uint32_t		curr_preferredlft;
++	uint32_t		last_time_pollinged_preferredlft;
+ 
+ 	/* Mobile IPv6 extensions */
+ 	int             	AdvRouterAddr;

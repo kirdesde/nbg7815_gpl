@@ -1,0 +1,128 @@
+#!/bin/sh 
+. /etc/functions.sh
+include /lib/network
+
+##check mode,if AP/UR,exit
+sys_mode=$(get_sys_mode)
+op_role=$(uci get system.main.operation_role)
+[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] && [ "$op_role" != "controller" ] && exit 0
+
+
+vpn_passthrough(){
+	pptpenable=$(uci_get nat general pptp)
+	l2tpenable=$(uci_get nat general l2tp)
+	ipsecenable=$(uci_get nat general ipsec)
+
+	if [ "$pptpenable" == "enable" ];then
+	        iptables -D FORWARD -p gre -j DROP
+			iptables -D FORWARD -p tcp --dport 1723 -j DROP
+	else
+			iptables -D FORWARD -p gre -j DROP
+			iptables -D FORWARD -p tcp --dport 1723 -j DROP
+	        iptables -I FORWARD -p tcp --dport 1723 -j DROP
+	        iptables -I FORWARD -p gre -j DROP
+	fi
+
+	if [ "$l2tpenable" == "enable" ];then
+			iptables -D FORWARD -p udp --dport 1701 -j DROP
+	else
+			iptables -D FORWARD -p udp --dport 1701 -j DROP
+	 		iptables -I FORWARD -p udp --dport 1701 -j DROP
+	fi
+
+	if [ "$ipsecenable" == "enable" ];then
+			iptables -D FORWARD -p udp --dport 500 -j DROP
+			iptables -D FORWARD -p udp --dport 4500 -j DROP
+			iptables -D FORWARD -p udp --dport 51 -j DROP
+			iptables -D FORWARD -p udp --dport 50 -j DROP
+	else
+			iptables -D FORWARD -p udp --dport 500 -j DROP
+			iptables -D FORWARD -p udp --dport 4500 -j DROP
+			iptables -D FORWARD -p udp --dport 51 -j DROP
+			iptables -D FORWARD -p udp --dport 50 -j DROP
+	        iptables -I FORWARD -p udp --dport 500 -j DROP
+			iptables -I FORWARD -p udp --dport 4500 -j DROP
+			iptables -I FORWARD -p udp --dport 51 -j DROP
+			iptables -I FORWARD -p udp --dport 50 -j DROP
+
+	fi
+}
+boot() {
+        scan_interfaces
+
+        config_get WAN wan ifname
+        config_get LAN lan ifname
+        #vpn_passthrough
+}
+
+apply() {
+	## DOS, IP filter, ICMP ping
+	/lib/firewall/configure_firewall
+	
+	## iptables app reorder
+	/lib/firewall/iptables_app_order
+
+	vpn_passthrough
+}
+
+EXTRA_HELP="    apply   Apply new rules"
+EXTRA_COMMANDS="apply"
+
+cmd=$1
+
+case "$cmd" in
+boot) boot
+		;;
+apply|stop|start|reload|restart|init)
+	## firewall
+	iptables -F input_rule
+	iptables -F output_igmp
+	iptables -F forwarding_rule_filter
+	iptables -F lan_local_default
+	#iptables -t nat -F prerouting_parental_rule ##move to firewall_blockdevice
+    
+	iptables -D INPUT -j input_rule
+	iptables -D OUTPUT -j output_igmp
+	iptables -D FORWARD -j forwarding_rule_filter
+	iptables -D INPUT -j lan_local_default
+    
+	iptables -D INPUT -j ACCEPT
+	iptables -D FORWARD -j ACCEPT
+     
+	iptables -X input_rule
+	iptables -X output_igmp
+	iptables -X forwarding_rule_filter
+	iptables -X lan_local_default
+    
+	## icmp filter
+	iptables -F input_icmp
+	iptables -F forwarding_icmp
+    
+	iptables -D INPUT -p icmp -j input_icmp
+	iptables -D FORWARD -p icmp -j forwarding_icmp
+    
+	iptables -X input_icmp
+	iptables -X forwarding_icmp
+    
+	## ipv4 DoS
+	iptables -F DOS_INPUT
+	iptables -F DOS_FORWARD
+	iptables -F SYN_FLOODING
+	iptables -F PORT_SCAN
+	iptables -F BAD_PING
+	iptables -t mangle -F DOS_LAND_ATTACK_LOG 
+
+	iptables -D INPUT -j DOS_INPUT 2>/dev/null
+	iptables -D FORWARD -j DOS_FORWARD 2>/dev/null
+	iptables -t mangle -D PREROUTING -j DOS_LAND_ATTACK_LOG 2>/dev/null
+    
+	iptables -X DOS_INPUT
+	iptables -X DOS_FORWARD
+	iptables -X SYN_FLOODING
+	iptables -X PORT_SCAN
+	iptables -X BAD_PING
+	iptables -t mangle -X DOS_LAND_ATTACK_LOG
+	
+	apply
+	;;
+esac

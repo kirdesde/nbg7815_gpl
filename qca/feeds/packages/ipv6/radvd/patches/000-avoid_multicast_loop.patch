@@ -1,0 +1,18 @@
+--- radvd-1.8.3.orig/socket.c	2011-10-06 18:52:20.000000000 +0800
++++ radvd-1.8.3/socket.c	2013-01-31 15:11:34.000000000 +0800
+@@ -87,6 +87,15 @@
+ 	}
+ #endif
+ 
++/* Michael 2013.02.01  disable loopback of RA */
++        int loop = 0;
++        err = setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, &loop, sizeof(loop));
++        if (err < 0)
++        {
++                flog(LOG_ERR, "setsockopt(IPV6_MULTICAST_LOOP): %s", strerror(errno));
++                return (-1);
++        }
++
+ 	/*
+ 	 * setup ICMP filter
+ 	 */

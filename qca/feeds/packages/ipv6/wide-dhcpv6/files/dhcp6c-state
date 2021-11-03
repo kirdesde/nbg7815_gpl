@@ -1,0 +1,36 @@
+#!/bin/sh
+
+. /etc/functions.sh
+
+olddnsv6=$(uci_get_state dhcp6c state domain_name_servers "")
+
+uci_revert_state dhcp6c state
+uci_set_state dhcp6c state "" dhcp6c_state
+uci_set_state dhcp6c state domain_name_servers "$new_domain_name_servers"
+uci_set_state dhcp6c state domain_name "$new_domain_name"                    
+uci_set_state dhcp6c state ntp_servers "$new_ntp_servers"                    
+uci_set_state dhcp6c state sip_server_address "$new_sip_servers"
+uci_set_state dhcp6c state sip_server_domain_name "$new_sip_name"
+uci_set_state dhcp6c state nis_server_address "$new_nis_servers"      
+uci_set_state dhcp6c state nis_domain_name "$new_nis_name"            
+uci_set_state dhcp6c state nisp_server_address "$new_nisp_servers"    
+uci_set_state dhcp6c state nisp_domain_name "$new_nisp_name"          
+uci_set_state dhcp6c state bcmcs_server_address "$new_bcmcs_servers"  
+uci_set_state dhcp6c state bcmcs_server_domain_name "$new_bcmcs_name"
+
+## Update DNSv6 in Runtime.
+[ "$olddnsv6" != "$new_domain_name_servers" ] && {
+    ## Flag on dnsv6update.
+    uci set radvd.interface.dnsv6update=1
+    
+    ## Opposite M flag value.
+    currMflag=$(uci get radvd.interface.AdvManagedFlag)
+    [ $currMflag -a $currMflag -eq 1 ] && {
+        uci set radvd.interface.AdvManagedFlag=0
+    } || {
+        uci set radvd.interface.AdvManagedFlag=1
+    }
+
+    ACTION=start /sbin/hotplug-call dhcp6c
+}
+

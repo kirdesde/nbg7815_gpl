@@ -1,0 +1,349 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2008-2011 OpenWrt.org
+START=99
+
+
+smb_set_user() {
+	local samba_enable
+	local samba_name
+	local samba_passwd
+	local etc_passwd
+	local accountList_sys=$(awk -F':' '{ print $1}' /etc/passwd)
+	local proftpd_enable
+	local proftpd_name
+	local openvpn_name
+	local same_flag
+	
+	mkdir /var/samba
+	#cp /etc/samba/smbpasswd.temp /etc/samba/smbpasswd
+
+	# clean do'nt used user 
+	for user in $accountList_sys
+	do
+		same_flag="0"
+		if [ "$user" == "root" ] || [ "$user" == "daemon" ] || [ "$user" == "ftp" ] || [ "$user" == "network" ] || [ "$user" == "nobody" ]; then
+			continue
+		fi
+		
+		echo "user=" $user
+		# check ftp user 
+		for i in $(seq 1 5)
+		do	
+			proftpd_enable=$(uci get proftpd.profile$i.enable)
+		
+			if [ "$proftpd_enable" == "0" ] || [ "$proftpd_enable" == "" ];then
+				continue;
+			fi
+			proftpd_name=$(uci get proftpd.profile$i.name)
+			if [ "$user" == "$proftpd_name" ];then 
+				same_flag="1"
+				break
+			fi
+				
+		done
+		
+		if [ "$same_flag" == "1" ];then
+			continue;
+		fi
+		
+		# check openvpn
+		#local vpn_enable=$(uci get openvpn.server.enable)
+		#if [ "$vpn_enable" != "0" ]; then
+			##split ".-." and ".--."
+		#	local accountList=$(uci get openvpn.server.account)
+		#	list=$(echo $accountList |sed -r 's/.--./ /g')
+		#	for USER_VPN in $list
+		#	do
+		#		openvpn_name=$(echo $USER_VPN | awk -F'.-.' '{ print $1}')
+				
+		#		if [ "$openvpn_name" == "root" ]; then
+		#			continue
+		#		fi
+				
+		#		echo "openvpn_name=" $openvpn_name
+		#		if [ "$user" == "$openvpn_name" ];then 
+		#		same_flag="1"
+		#		break
+		#	fi
+								
+		#	done
+		#fi
+		
+		echo "same_flag=" $same_flag
+		
+		# delete samba user 
+		if [ "$same_flag" == "0" ];then
+			deluser $user
+		fi
+
+	done
+	
+	for i in $(seq 1 5)
+    do
+		samba_enable=$(uci get samba.user${i}.enable)
+	    samba_name=$(uci get samba.user${i}.name)
+		samba_passwd=$(uci get samba.user${i}.passwd)
+		
+		if [ "$samba_enable" == "0" ] || [ "$samba_enable" == "" ];then
+				continue;
+		fi 
+		
+		samba_name=$(uci get samba.user${i}.name)
+		samba_passwd=$(uci get samba.user${i}.passwd)
+		
+		same_flag="0"
+		echo "samba_name=" $samba_name
+		echo "samba_passwd=" $samba_passwd
+		########################################
+		accountList_sys=$(awk -F':' '{ print $1}' /etc/passwd)
+		for etc_passwd in $accountList_sys
+		do
+			if [ "$etc_passwd" == "root" ] || [ "$etc_passwd" == "daemon" ] || [ "$etc_passwd" == "ftp" ] || [ "$etc_passwd" == "network" ] || [ "$etc_passwd" == "nobody" ]; then
+				continue
+			fi
+			if [ "$etc_passwd" == "$samba_name" ];then
+				#deluser $samba_name
+				same_flag="1"
+				break 
+			fi 
+				
+		done
+		########################################
+		
+		#etc_passwd=$(cat /etc/passwd | grep "$samba_name:")
+		#echo "etc_passwd=" $etc_passwd
+		
+		if [ "$same_flag" == "1" ];then
+		
+			/usr/sbin/smbpasswd $samba_name $samba_passwd
+		else
+			adduser -S -H $samba_name
+			/usr/sbin/smbpasswd $samba_name $samba_passwd
+		fi 
+		
+			
+	done
+		
+}
+
+
+smb_header() {
+	local interfaces
+	local loopback_ipaddr=$(uci get network.loopback.ipaddr)
+	local loopback_netmask=$(uci get network.loopback.netmask)
+	local lan_ipaddr=$(uci get network.lan.ipaddr)
+	local lan_netmask=$(uci get network.lan.netmask)
+	local lo="lo" 
+	interfaces=$loopback_ipaddr"/"$loopback_netmask" "$lo" "$lan_ipaddr"/"$lan_netmask" br-lan"
+	# local name workgroup description charset 
+	# local hostname="$(uci_get system.@system[0].hostname)"
+
+	# config_get name        $1 name        "${hostname:-OpenWrt}"
+	# config_get workgroup   $1 workgroup   "${hostname:-OpenWrt}"
+	# config_get description $1 description "Samba on ${hostname:-OpenWrt}"
+	# config_get charset     $1 charset     "UTF-8"
+
+	local easymode=$(uci get samba.general.easymode)
+	local name=$(uci get samba.general.name)
+	local workgroup=$(uci get samba.general.workgroup)
+	local description=$(uci get samba.general.description)
+	local charset=$(uci get samba.general.charset)
+	
+	if [ "$easymode" == "1" ];then		
+		type="share"
+	else
+		type="user"				
+	fi	
+	
+	mkdir -p /var/etc
+	sed -e "s#|NAME|#$name#g" \
+	    -e "s#|WORKGROUP|#$workgroup#g" \
+	    -e "s#|DESCRIPTION|#$description#g" \
+	    -e "s#|INTERFACES|#$interfaces#g" \
+	    -e "s#|CHARSET|#$charset#g" \
+	    -e "s#|TYPE|#$type#g" \
+	    /etc/samba/smb.conf.template > /var/etc/smb.conf
+	
+	local homes
+	
+	config_get_bool homes $1 homes 0
+	[ $homes -gt 0 ] && {
+		cat <<EOT >> /var/etc/smb.conf
+
+[homes]
+	comment     = Home Directories
+	browsable   = no
+	read only   = no
+	create mode = 0750
+EOT
+	}
+	#[ -L /var/samba/smb.conf ] || ln -nsf /var/etc/smb.conf /etc/samba/smb.conf
+	ln -nsf /var/etc/smb.conf /etc/samba/smb.conf
+}
+
+smb_add_share() {
+	
+	local name=$(uci get samba.$1.name)
+	local path=$(uci get samba.$1.path)
+	local usb=$(echo $name | awk -F "USB" '{print $2}' | awk -F "-" '{print $1}')
+	local easymode=$(uci get samba.general.easymode)
+
+	[ -z "$name" -o -z "$path" ] && return
+	
+	[ "$path" = " " ] && return
+
+	echo -e "\n[$name]\n\tpath = $path" >> /var/etc/smb.conf
+	echo -e "\tcreate mask = 0777" >> /var/etc/smb.conf
+	echo -e "\tdirectory mask = 0777" >> /var/etc/smb.conf
+
+	if [ "$easymode" == "1" ];then
+		echo -e "\tguest ok = yes" >> /var/etc/smb.conf
+		echo -e "\twritable = yes" >> /var/etc/smb.conf
+	else
+		if [ "$usb" == "1" ];then
+			[ -n "$usb1_invalid_users" ] && echo -e "\tinvalid users = $usb1_invalid_users" >> /var/etc/smb.conf
+			[ -n "$usb1_write_list" ] && echo -e "\twrite list = $usb1_write_list" >> /var/etc/smb.conf
+
+		elif [ "$usb" == "2" ];then
+			[ -n "$usb2_invalid_users" ] && echo -e "\tinvalid users = $usb2_invalid_users" >> /var/etc/smb.conf
+			[ -n "$usb2_write_list" ] && echo -e "\twrite list = $usb2_write_list" >> /var/etc/smb.conf
+		fi
+	fi
+}
+
+set_usb_user() {
+	local enable=$(uci get samba.$1.enable)
+	local name=$(uci get samba.$1.name)
+	local usb1=$(uci get samba.$1.usb1)
+	local usb2=$(uci get samba.$1.usb2)
+
+	if [ "$enable" == "1" ];then
+		if [ -n "$name" ] || [ "$name" == " " ];then
+			if [ "$usb1" == "0" ];then
+				usb1_invalid_users="$usb1_invalid_users""$name, "
+			elif [ "$usb1" == "2" ];then
+				usb1_write_list="$usb1_write_list""$name, "
+			fi
+
+			if [ "$usb2" == "0" ];then
+				usb2_invalid_users="$usb2_invalid_users""$name, "
+			elif [ "$usb2" == "2" ];then
+				usb2_write_list="$usb2_write_list""$name, "
+			fi
+		fi
+	fi
+}
+
+chk_smbd_running(){
+	sleep 3
+	while true :
+	do
+		sleep 2
+		chk_smbd=$(ps |grep smbd |grep -v grep)
+		
+		if [ "$chk_smbd" == "" ];then
+			echo "smbd run fail, check to restart" > /dev/console
+			/bin/smbd -D
+		else
+			echo "smbd restart run success" > /dev/console
+			break
+		fi
+	done
+}
+
+start() {
+
+	local nobody_value
+	local daemon_value
+	local network_value
+	local ftp_value	
+
+	local usb1_write_list
+	local usb1_invalid_users
+	local usb2_write_list
+	local usb2_invalid_users
+
+	config_load proftpd		
+	config_get proftpd_enable global enable
+		
+	if [ "$proftpd_enable" == "1" ]; then
+		
+		sleep 2
+	fi	
+	# config_load system
+	# config_get enable general enable	
+	
+	local enable=$(uci get samba.general.enable)
+	if [ "$enable" == "1" ]; then
+		
+		smb_set_user
+		#smb_share_usb
+		mount_partition1=$(df |grep "/tmp/storage/usb1" |awk '{print $6}');
+		echo "mount_partition1=" $mount_partition1
+		mount_partition2=$(df |grep "/tmp/storage/usb2" |awk '{print $6}');
+		echo "mount_partition2=" $mount_partition2
+		if [ "$mount_partition1" == "" ] && [ "$mount_partition2" == "" ];then 
+			exit 0
+		fi 
+
+		if [ "$mount_partition1" != "" ];then 
+			usb1_path=$(uci get samba.usb1.path)
+			echo "usb1_path=" $usb1_path
+			if [ "$mount_partition1" != "$usb1_path" ];then
+				uci set samba.usb1.path=$mount_partition1
+				uci commit samba
+			fi	
+		fi
+
+		if [ "$mount_partition2" != "" ];then 
+			echo "usb2 exist"
+			usb2_path=$(uci get samba.usb2.path)
+			echo "usb2_path=" $usb2_path
+			if [ "$mount_partition2" != "$usb2_path" ];then
+				echo "must update"
+				uci set samba.usb2.path=$mount_partition2
+				uci commit samba
+			fi	
+		fi
+		for i in 1 2 3 4 5
+		do
+			set_usb_user "user${i}"
+		done
+		
+		config_load samba
+		smb_header
+				
+		for i in 1 2
+		do 
+			smb_add_share "usb${i}"
+		done	
+		
+		echo "start smbd........ "
+		/usr/sbin/nmbd -D
+		/usr/sbin/smbd -D
+
+		#chk_smbd_running &
+				
+	fi	
+
+}
+
+stop() {
+	killall nmbd
+	rm /var/run/nmbd.pid
+
+	killall smbd
+	rm /var/run/smbd.pid
+
+	sleep 1
+}
+
+case "$1" in
+    "stop" )
+        stop
+        ;;
+    "boot"|"start"|"restart" )
+        stop
+		start
+        ;;
+esac

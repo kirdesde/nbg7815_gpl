@@ -1,0 +1,12 @@
+--- a/radvd.c	2019-11-27 10:01:46.761870000 +0000
++++ b/radvd.c	2019-11-27 10:04:04.218759915 +0000
+@@ -426,8 +426,7 @@
+ 			}
+ 		}
+ 		//2016/1/11, Niko. the max timeout is 10 secs, because if wifi is off the timeout time there will be too long
+-		timeout= timeout>10000? 10000: timeout;
+-
++		//timeout= timeout>10000? 10000: timeout;
+ 		dlog(LOG_DEBUG, 7, "polling for %g seconds.", timeout/1000.0);
+ 
+ 		rc = poll(fds, sizeof(fds)/sizeof(fds[0]), timeout);

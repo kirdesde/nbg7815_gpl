@@ -1,0 +1,28 @@
+--- a/prefixconf.c
++++ b/prefixconf.c
+@@ -76,6 +76,10 @@ struct iactl_pd {
+ #define iacpd_release_data common.release_data
+ #define iacpd_cleanup common.cleanup
+ 
++#ifndef TMP_FILE
++#define TMP_FILE "/tmp/radvd_oldpd"
++#endif
++
+ struct siteprefix {
+ 	TAILQ_ENTRY (siteprefix) link;
+ 
+@@ -257,6 +261,14 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 				);system(cmd);
+ 		snprintf(cmd, sizeof(cmd), "uci commit radvd");system(cmd);
+ 	}
++	else {
++		// Note prefix who's lifetimes be set to 0 immediately, for radvd.sh to read it to notice clients.
++		snprintf(str, sizeof(str)
++				, "echo %s > %s"
++				, in6addr2str(&pinfo->addr, 0), TMP_FILE
++				, pinfo->pltime, pinfo->vltime, sp->prefix.pltime, sp->prefix.vltime
++				);system(str);
++	}
+ 
+ 	/*
+ 	 * If the new vltime is 0, this prefix immediately expires.

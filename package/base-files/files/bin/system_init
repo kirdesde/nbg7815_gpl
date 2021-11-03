@@ -1,0 +1,20 @@
+#!/bin/sh
+
+base_addr=$(fw_printenv ethaddr | awk -F"=" '{print $2}' |sed 's/"//g')
+LAN_MAC=$(atsh |grep LAN | awk -F": " '{print $2}' |sed 's/"//g')
+serial_num=$(fw_printenv serialnum | awk -F"=" '{print $2}')
+
+echo -n $base_addr > /tmp/FirstMAC
+echo -n $serial_num > /tmp/Serial_num
+
+##set WiFi default board data
+#WiFi_init "BOARD_DATA"
+
+fw_project_name=$(firmware_info | awk '/Project/{print $3}')
+
+case "$fw_project_name" in
+ 	NBG7815) WiFi_init "CHANNEL" ;;
+esac
+
+# seems unnecessary in NBG7815
+#/bin/system_application.sh

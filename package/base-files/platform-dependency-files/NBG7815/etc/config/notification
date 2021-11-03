@@ -1,0 +1,47 @@
+config interface 'global'
+	option enable 1
+
+config interface 'firmware'
+	option enable 1
+
+config interface 'speedtest'
+	option enable 0
+
+config interface 'newDevConn'
+	option enable 1
+
+config wifi-iface 'ath0'
+	option enable 1
+
+config wifi-iface 'ath1'
+	option enable 0
+
+config wifi-iface 'ath2'
+	option enable 0
+
+config wifi-iface 'ath3'
+	option enable 0
+
+config wifi-iface 'ath4'
+	option enable 0
+
+config wifi-iface 'ath5'
+	option enable 0
+
+config wifi-iface 'ath10'
+	option enable 1
+
+config wifi-iface 'ath11'
+	option enable 0
+
+config wifi-iface 'ath12'
+	option enable 0
+
+config wifi-iface 'ath13'
+	option enable 0
+
+config wifi-iface 'ath14'
+	option enable 0
+
+config wifi-iface 'ath15'
+	option enable 0

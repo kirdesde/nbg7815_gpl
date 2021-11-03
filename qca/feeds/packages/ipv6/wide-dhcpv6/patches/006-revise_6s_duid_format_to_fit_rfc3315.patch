@@ -1,0 +1,15 @@
+--- a/common.c
++++ b/common.c
+@@ -1068,10 +1068,12 @@ get_duid(idfile, duid)
+ 			    "failed to open DUID file for save");
+ 			goto fail;
+ 		}
++/* This format do not match RFC3315 sec. 9.1 .
+ 		if ((fwrite(&len, sizeof(len), 1, fp)) != 1) {
+ 			dprintf(LOG_ERR, FNAME, "failed to save DUID");
+ 			goto fail;
+ 		}
++*/
+ 		if ((fwrite(duid->duid_id, len, 1, fp)) != 1) {
+ 			dprintf(LOG_ERR, FNAME, "failed to save DUID");
+ 			goto fail;

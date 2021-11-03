@@ -1,0 +1,205 @@
+#!/bin/sh 
+
+. /lib/functions.sh
+. /lib/config/uci.sh
+
+lan_interface="br-lan"
+
+filter()
+{
+	config_load firewall
+	config_get www_port remote_www port
+	config_get www_inf remote_www interface
+	config_get www_client_check remote_www client_check
+	config_get www_client_addr remote_www client_addr
+
+	if [ "on" = "$1" ]; then
+		filter_type=" -I "
+	else
+		filter_type=" -D "
+	fi
+		#no access
+		echo disable www
+		
+		inf_cmd=""
+		# insert DROP rule first 
+		case $www_inf in
+			0)
+			#disable
+			if [ "$www_client_check" = "0" ]; then
+				exit 0
+			fi
+			;;
+			2)
+			#lan
+			if [ "$www_client_check" = "0" ]; then
+				inf_cmd=" ! -i $lan_interface "
+			fi
+			;;
+			3)
+			#wan
+			if [ "$www_client_check" = "0" ]; then
+				inf_cmd=" -i $lan_interface "
+			fi
+			;;
+		esac
+		if [ $www_inf -ne 1 -o $www_client_check -ne 0 ]; then
+			iptables -t filter $filter_type RMMG_WWW_INPUT $inf_cmd -p tcp --dport $www_port -j DROP 2> /dev/null
+		fi
+		
+		if [ "$www_client_check" = "0" ]; then
+			addr_cmd=""
+		else
+			addr_cmd=" -s $www_client_addr "
+		fi
+
+		case $www_inf in
+			1)
+			# lan and wan
+			proto=$(uci_get network wan proto)
+			if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+				inf_cmd=" -i $proto-wan"
+			else
+				inf_cmd=" -i $(uci_get network wan ifname)"
+			fi
+			iptables -t filter $filter_type RMMG_WWW_INPUT $inf_cmd $addr_cmd -p tcp --dport $www_port -j ACCEPT 2> /dev/null
+			inf_cmd=" -i $lan_interface "
+			iptables -t filter $filter_type RMMG_WWW_INPUT $inf_cmd $addr_cmd -p tcp --dport $www_port -j ACCEPT 2> /dev/null
+			;;
+			2)
+			#lan
+			inf_cmd=" -i $lan_interface "
+			iptables -t filter $filter_type RMMG_WWW_INPUT $inf_cmd $addr_cmd -p tcp --dport $www_port -j ACCEPT 2> /dev/null
+			;;
+			3)
+			#wan
+			inf_cmd=" ! -i $lan_interface "
+			iptables -t filter $filter_type RMMG_WWW_INPUT $inf_cmd $addr_cmd -p tcp --dport $www_port -j ACCEPT 2> /dev/null
+			;;
+		esac
+
+		local captive_http_port=$(uci get captiveportal.general.redirect_HTTP_port)
+		local captive_https_port=$(uci get captiveportal.general.redirect_HTTPS_port)
+		local visitor_network_feature=$(wifisys_tool -g 1 -f 2)
+		[ "$visitor_network_feature" == "2" ] && {
+		iptables -t filter $filter_type RMMG_WWW_INPUT -i br-visitor1 -p tcp --dport 8008 -j ACCEPT 2> /dev/null
+		iptables -t filter $filter_type RMMG_WWW_INPUT -i br-visitor1 -p tcp --dport $captive_http_port -j ACCEPT 2> /dev/null
+		iptables -t filter $filter_type RMMG_WWW_INPUT -i br-visitor1 -p tcp --dport $captive_https_port -j ACCEPT 2> /dev/null
+		}
+}
+
+filterHttps()
+{
+	config_load firewall
+	config_get www_port remote_https port
+	config_get www_inf remote_https interface
+	config_get www_client_check remote_https client_check
+	config_get www_client_addr remote_https client_addr
+
+	if [ "on" = "$1" ]; then
+		filter_type=" -I "
+	else
+		filter_type=" -D "
+	fi
+		inf_cmd=""
+		# insert DROP rule first 
+		case $www_inf in
+			0)
+			#disable
+			if [ "$www_client_check" = "0" ]; then
+				exit 0
+			fi
+			;;
+			2)
+			#lan
+			if [ "$www_client_check" = "0" ]; then
+				inf_cmd=" ! -i $lan_interface"
+			fi
+			;;
+			3)
+			#wan
+			if [ "$www_client_check" = "0" ]; then
+				inf_cmd=" -i $lan_interface"
+			fi
+			;;
+		esac
+		if [ $www_inf -ne 1 -o $www_client_check -ne 0 ]; then
+			iptables -t filter $filter_type RMMG_WWW_INPUT $inf_cmd -p tcp --dport $www_port -j DROP 2> /dev/null
+		fi
+
+		if [ "$www_client_check" = "0" ]; then
+			addr_cmd=""
+		else
+			addr_cmd=" -s $www_client_addr "
+		fi
+
+		case $www_inf in
+			1)
+			# lan and wan
+			proto=$(uci_get network wan proto)
+			if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+				inf_cmd=" -i $proto-wan"
+			else
+				inf_cmd=" -i $(uci_get network wan ifname)"
+			fi
+			iptables -t filter $filter_type RMMG_WWW_INPUT $inf_cmd $addr_cmd -p tcp --dport $www_port -j ACCEPT 2> /dev/null
+			inf_cmd=" -i $lan_interface "
+			iptables -t filter $filter_type RMMG_WWW_INPUT $inf_cmd $addr_cmd -p tcp --dport $www_port -j ACCEPT 2> /dev/null
+			;;
+			2)
+			#lan
+			inf_cmd=" -i $lan_interface"
+			iptables -t filter $filter_type RMMG_WWW_INPUT $inf_cmd $addr_cmd -p tcp --dport $www_port -j ACCEPT 2> /dev/null
+			;;
+			3)
+			#wan
+			inf_cmd=" ! -i $lan_interface"
+			iptables -t filter $filter_type RMMG_WWW_INPUT $inf_cmd $addr_cmd -p tcp --dport $www_port -j ACCEPT 2> /dev/null
+			;;
+		esac
+}
+
+config_aishield(){
+	[ `uci get system.main.system_mode` != 1 ] && return
+
+	proto=$(uci get network.wan.proto)
+
+	if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+        WAN="$proto"-wan
+	else
+        WAN=$(uci get network.wan.ifname)
+	fi
+	iptables -t filter -I RMMG_WWW_INPUT ! -i $WAN -p tcp --dport 8088 -j ACCEPT 2> /dev/null
+}
+
+start () {
+	##check mode,if AP/UR,exit
+	local sys_mode=`uci get system.main.system_mode`
+	[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] || {
+		iptables -F RMMG_WWW_INPUT 2> /dev/null
+		iptables -X RMMG_WWW_INPUT
+		iptables -N RMMG_WWW_INPUT
+		filter "on"
+		filterHttps "on"
+		config_aishield
+	}
+}
+
+stop() {
+	##check mode,if AP/UR,exit
+	local sys_mode=`uci get system.main.system_mode`
+	[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] || {
+		filter "off"
+		filterHttps "off"
+	}
+}
+
+case "$1" in
+	"start" )
+		start
+		;;
+	"stop" )
+		stop
+		;;
+esac
+

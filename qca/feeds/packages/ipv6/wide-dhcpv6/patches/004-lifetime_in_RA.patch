@@ -1,0 +1,61 @@
+--- a/prefixconf.c	2007-03-21 02:52:55.000000000 -0700
++++ b/prefixconf.c	2014-07-30 02:12:26.668601010 -0700
+@@ -132,7 +132,7 @@
+ 	struct prefix_ifconf *pif;
+ 	int spcreate = 0;
+ 	struct timeval timo;
+-
++	char str[80];
+ 	/*
+ 	 * A client discards any addresses for which the preferred
+          * lifetime is greater than the valid lifetime.
+@@ -147,6 +147,12 @@
+ 		    pinfo->pltime, pinfo->vltime);
+ 		return (-1);
+ 	}
++	sprintf(str, "uci set radvd.prefix.AdvPreferredLifetime=%lu",pinfo->pltime);
++        system(str);
++        sprintf(str, "uci set radvd.prefix.AdvValidLifetime=%lu",pinfo->vltime);
++        system(str);
++	sprintf(str, "uci commit radvd");
++	system(str);
+ 
+ 	if (iac_pd == NULL) {
+ 		if ((iac_pd = malloc(sizeof(*iac_pd))) == NULL) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

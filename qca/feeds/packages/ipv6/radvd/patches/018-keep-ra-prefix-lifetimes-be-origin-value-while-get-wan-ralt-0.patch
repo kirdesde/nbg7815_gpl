@@ -1,0 +1,526 @@
+--- a/radvd.c
++++ b/radvd.c
+@@ -428,7 +428,7 @@ void main_loop(void)
+ 		//2016/1/11, Niko. the max timeout is 10 secs, because if wifi is off the timeout time there will be too long
+ 		timeout= timeout>10000? 10000: timeout;
+ 
+-		dlog(LOG_DEBUG, 5, "polling for %g seconds.", timeout/1000.0);
++		dlog(LOG_DEBUG, 7, "polling for %g seconds.", timeout/1000.0);
+ 
+ 		rc = poll(fds, sizeof(fds)/sizeof(fds[0]), timeout);
+ 
+@@ -687,9 +687,9 @@ void reload_config(void)
+ 	config_interface();
+ 
+ 	//2016/01/08, niko: adter reread config, check wan status. then kickoff_adverts
+-	if(check_wan_ip_empty()==1)
++	if(IsRouteGG()==1)
+ 	{
+-		set_prefix_lifetimes_to_zero(IfaceList);
++		set_ra_lifetime_to_zero(IfaceList);
+ 		g_HasSetRaltToZero= 1;
+ 	}
+ 	kickoff_adverts();
+@@ -1197,53 +1197,49 @@ is_old_new_prefix_exist_and_diff(void)
+ void
+ kickoff_adverts_when_pd_change(void)
+ {
+-        struct Interface *iface;
+-        /*
+-         *      send initial advertisement and set timers
+-         */
+-        for(iface=IfaceList; iface; iface=iface->next)
+-        {
+-                double next;
++    struct Interface *iface;
++    /*
++     *      send initial advertisement and set timers
++     */
++    for(iface=IfaceList; iface; iface=iface->next)
++    {
++        double next;
++
++        gettimeofday(&iface->last_ra_time, NULL);
++        if( iface->UnicastOnly )  continue;
+ 
+-                gettimeofday(&iface->last_ra_time, NULL);
+-                if( iface->UnicastOnly )
+-                        continue;
+-
+-                gettimeofday(&iface->last_multicast, NULL);
+-                if (!iface->AdvSendAdvert)
+-                        continue;
+-
+-                set_prefix_plt_vlt_to_zero();
+-                set_prefix_to_old();
+-                /* send an initial advertisement */
+-                int i=3;
+-                for (;i>0;i--) {
+-                        if (send_ra_forall(iface, NULL) == 0) {
+-                                iface->init_racount++;
+-                                next = min(MAX_INITIAL_RTR_ADVERT_INTERVAL, iface->MaxRtrAdvInterval);
+-                                iface->next_multicast = next_timeval(next);
+-                        }
+-                }
+-                set_prefix_plt_vlt_back();
+-                set_prefix_back_to_new();
++        gettimeofday(&iface->last_multicast, NULL);
++        if (!iface->AdvSendAdvert)  continue;
++
++        set_prefix_plt_vlt_to_zero();
++        set_prefix_to_old();
++        /* send an initial advertisement */
++        int i=3;
++        for (;i>0;i--) {
++            if (send_ra_forall(iface, NULL) == 0) {
++                iface->init_racount++;
++                next = min(MAX_INITIAL_RTR_ADVERT_INTERVAL, iface->MaxRtrAdvInterval);
++                iface->next_multicast = next_timeval(next);
++            }
+         }
++        set_prefix_plt_vlt_back();
++        set_prefix_back_to_new();
++    }
+ }
+ 
+ //2015/09/22, Niko add, initiative check is need send lifetime=0 or normal lifetime RA package
+ int initiativeCheckLifetime()
+ {
+-	static int wanip_empty_flag= 0; //exclusive flag, trigger one time only
+-	if( wanip_empty_flag==0 && check_wan_ip_empty()==1 )
+-	{
+-		wanip_empty_flag= 1;
+-		return 1;
+-	}
+-	if( wanip_empty_flag==1 && check_wan_ip_empty()==0 )
+-	{
+-		wanip_empty_flag= 0;
++	static int route_gg_flag= 0; //exclusive flag, trigger one time only
++	int routeGG;
++
++	routeGG = IsRouteGG();
++
++	if (route_gg_flag != routeGG) {
++		route_gg_flag = routeGG;
+ 		return 1;
+ 	}
+-	
++
+ 	return 0;
+ }
+ 
+@@ -1264,12 +1260,9 @@ time_diff_secs2(const struct timeval *ti
+ static void
+ decrement_lifetime2(const time_t secs, uint32_t *lifetime)
+ {
+-	if (*lifetime > secs)
+-	{
++	if (*lifetime > secs) {
+ 		*lifetime -= secs;
+-	}
+-	else
+-	{
++	} else {
+ 		*lifetime = 0;
+ 	}
+ }
+--- a/radvd.h
++++ b/radvd.h
+@@ -63,7 +63,7 @@ struct Interface {
+ 	uint32_t		AdvRetransTimer;
+ 	uint8_t			AdvCurHopLimit;
+ 	int32_t			AdvDefaultLifetime;   /* XXX: really uint16_t but we need to use -1 */
+-	int32_t			AdvDefaultLifetime_bak;	//2016/01/07 Niko: backup Router Lifetime for set_prefix_lifetimes_to_zero() and set_prefix_lifetimes_back() functions
++	int32_t			AdvDefaultLifetime_bak;	//2016/01/07 Niko: backup Router Lifetime.
+ 	int			AdvDefaultPreference;
+ 	int			AdvSourceLLAddress;
+ 	int			UnicastOnly;
+@@ -190,11 +190,6 @@ int yylex(void);
+ int check_ip6_forwarding(void);
+ void reload_config(void);
+ void reset_prefix_lifetimes(void);
+-int check_wan_ip_empty(void);
+-void set_prefix_lifetimes_to_zero(struct Interface *iface);
+-void set_prefix_lifetimes_back(struct Interface *iface);
+-int g_NeedSetRaltToZero;
+-int g_HasSetRaltToZero;
+ 
+ /* timer.c */
+ struct timeval next_timeval(double next);
+@@ -229,6 +224,13 @@ int open_icmpv6_socket(void);
+ /* send.c */
+ int send_ra(struct Interface *iface, struct in6_addr *dest);
+ int send_ra_forall(struct Interface *iface, struct in6_addr *dest);
++int g_NeedSetRaltToZero;
++int g_HasSetRaltToZero;
++int IsRouteGG(void);
++int  get_ra_lifetime(struct Interface *iface);
++void bak_ra_lifetime(struct Interface *iface);
++void set_ra_lifetime_to_zero(struct Interface *iface);
++void rvt_ra_lifetime(struct Interface *iface);
+ 
+ /* process.c */
+ void process(struct Interface *, unsigned char *, int,
+--- a/send.c
++++ b/send.c
+@@ -37,18 +37,30 @@ g_HasSetRaltToZero=0;
+ int
+ send_ra_forall(struct Interface *iface, struct in6_addr *dest)
+ {
+-	if (!pd_change_flag_on()) {
+-		g_NeedSetRaltToZero = check_wan_ip_empty();
++	int isPdChange = pd_change_flag_on();
++	dlog(LOG_DEBUG, 5, "%s( ): Msg, isPdChange=%d", __func__, isPdChange);
++
++	if (!isPdChange) {
++		int isRouteGG = -1;
++		int currRalt= -1;
++
++		isRouteGG = IsRouteGG();
++		currRalt = get_ra_lifetime(iface);
++		g_NeedSetRaltToZero = isRouteGG;
+ 
+ 		if (g_NeedSetRaltToZero != g_HasSetRaltToZero) {
+-			if (g_NeedSetRaltToZero == 1) {
+-				set_prefix_lifetimes_to_zero(iface);
++
++			if (1 == isRouteGG) {
++
++				if (currRalt>0) {
++					bak_ra_lifetime(iface);
++				}
++				set_ra_lifetime_to_zero(iface);
+ 			} else {
+-				set_prefix_lifetimes_back(iface);
++				rvt_ra_lifetime(iface);
+ 			}
+-
+-			g_HasSetRaltToZero = g_NeedSetRaltToZero;
+ 		}
++		g_HasSetRaltToZero = g_NeedSetRaltToZero;
+  	}
+ 
+ 	struct Clients *current;
+@@ -142,8 +154,8 @@ int DoGetFile(char* cmd)
+ 	return 0;
+ }
+ 
+-//2016/02/02, new version check_wan_ip_empty()
+-int check_wan_ip_empty()
++//2016/02/02, new version IsRouteGG()
++int IsRouteGG()
+ {
+ 	char cmd[512]={};
+ 	int m_6RDEnable= 0;
+@@ -235,244 +247,82 @@ int check_wan_ip_empty()
+ 	//Kerker add 2016/01/13
+ 	//Set ralt zero when no default route
+ 	if(system("ip -6 route|grep default")!=0){
+-		syslog(LOG_USER|LOG_DEBUG, "%s(%d): return 1", __func__, __LINE__);
++		syslog(LOG_USER|LOG_DEBUG, "%s(%d): no default router, return 1", __func__, __LINE__);
+ 		return 1;
+ 	}
+ 	
+ 	//syslog(LOG_USER|LOG_DEBUG, "%s(%d): return 0", __func__, __LINE__);
+ 	return 0;
+-
+ }
+ 
+-#if 0
+-//old version check_wan_ip_empty()
+-int check_wan_ip_empty(void)
++int get_ra_lifetime(struct Interface *iface)
+ {
+-	system("uci get network.general.wan6rd_enable > /tmp/wan6rd_enable");
+-	system("uci get network.general.wan6to4_enable > /tmp/wan6to4_enable");
+-	system("uci get network.general.wan6in4_enable > /tmp/wan6in4_enable");
+-	system("uci get network.general.ULA > /tmp/ULA_enable");
+-	system("uci get dhcp6c.basic.ifname > /tmp/curr_wan_ifname");
+-
+-	// chk if 6rd is enabled.
+-	FILE *fp_6rdenable = NULL;
+-	char m_6rdenable[50] = "";
+-	if((fp_6rdenable = fopen("/tmp/wan6rd_enable", "r")) == NULL ){
+-		fprintf(stderr, "fail to open tmpwan6rd_enable file\n");
+-	}else {
+-		fscanf(fp_6rdenable,"%s",m_6rdenable);
+-		fclose(fp_6rdenable);
+-	}
+-
+-	// chk if 6to4 is enabled.
+-	FILE *fp_6to4enable = NULL;
+-	char m_6to4enable[50] = "";
+-	if((fp_6to4enable = fopen("/tmp/wan6to4_enable", "r")) == NULL ){
+-		fprintf(stderr, "fail to open tmpwan6to4_enable file\n");
+-	}else {
+-		fscanf(fp_6to4enable,"%s",m_6to4enable);
+-		fclose(fp_6to4enable);
+-	}
+-
+-	// chk if 6in4 is enabled.
+-	FILE *fp_6in4enable = NULL;
+-	char m_6in4enable[50] = "";
+-	if((fp_6in4enable = fopen("/tmp/wan6in4_enable", "r")) == NULL ){
+-		fprintf(stderr, "fail to open tmpwan6in4_enable file\n");
+-	}else {
+-		fscanf(fp_6in4enable,"%s",m_6in4enable);
+-		fclose(fp_6in4enable);
+-	}
+-
+-	// chk if ULA is enabled.
+-	FILE *fp_ULAenable = NULL;
+-	char m_ULAenable[50] = "";
+-	if((fp_ULAenable = fopen("/tmp/ULA_enable", "r")) == NULL ){
+-		fprintf(stderr, "fail to open tmpULA_enable file\n");
+-	}else {
+-		fscanf(fp_ULAenable,"%s",m_ULAenable);
+-		fclose(fp_ULAenable);
+-	}
+-
+-	// get current WAN ifname.
+-	FILE *fp_ifname = NULL;
+-	char m_ifname[50] = "";
+-	if( strstr(m_6rdenable, "1") )
+-		strcpy(m_ifname, "6rd-wan6rd");
+-	else if( strstr(m_6to4enable, "1") )
+-		strcpy(m_ifname, "6rd-wan6to4");
+-	else if( strstr(m_6in4enable, "1") )
+-		strcpy(m_ifname, "6rd-wan6in4");
+-	else
+-	{
+-		if((fp_ifname = fopen("/tmp/curr_wan_ifname", "r")) == NULL )
++	int ra_lifetime = -1;
++
++	if (iface) {
++		for (iface; iface; iface = iface->next)
+ 		{
+-			fprintf(stderr, "fail to open tmpcurr_wan_ifname file\n");
+-			exit(1);
++			if (!iface)  break;
++			ra_lifetime = iface->AdvDefaultLifetime;
+ 		}
+-		fscanf(fp_ifname,"%s",m_ifname);
+-		fclose(fp_ifname);
+ 	}
++	dlog(LOG_INFO, 5, "Getting RA lifetime = %d", ra_lifetime);
+ 
+-	char m_msg[100] = "";
++	return ra_lifetime;
++}
+ 
+-	if ( (strstr(m_6rdenable, "1") != NULL) || (strstr(m_6to4enable, "1") != NULL) || (strstr(m_6in4enable, "1") != NULL) || (strstr(m_ULAenable, "1") != NULL) ) {
+-
+-		int infStatus = 0;
+-		if (strstr(m_6rdenable, "1")){
+-			if (check_tunnel_interface("6rd-wan6rd"))
+-				infStatus = 1;			
+-//#if 0		/*support 6rd now */
+-		} else if (strstr(m_6to4enable, "1")) {
+-			if (check_tunnel_interface("6to4-wan6to4"))
+-				infStatus = 1;			
+-		} else if (strstr(m_6in4enable, "1")) {
+-			if (check_tunnel_interface("6in4-wan6in4"))
+-				infStatus = 1;	
+-//#endif
+-		} else {
+-			infStatus = 1;
+-		}
++void bak_ra_lifetime(struct Interface *iface)
++{
++	int ra_lifetime = -1;
+ 
+-		if( infStatus ){
+-			//syslog(LOG_USER|LOG_DEBUG, "Tunneling Interface Up");
+-			//return 0; // wanip EXIST.
+-		}else{
+-			//syslog(LOG_USER|LOG_DEBUG, "Tunneling Interface Down");
+-			return 1; // wanip EMPTY.
++	if (iface) {
++		for (iface; iface; iface = iface->next)
++		{
++			if (!iface)  break;
++			iface->AdvDefaultLifetime_bak = iface->AdvDefaultLifetime;	//backup AdvDefaultLifetime
++			ra_lifetime = iface->AdvDefaultLifetime;
+ 		}
+-			
+-
+-		//snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep 'inet ' |awk '{print $2}' > /tmp/wanip\n", m_ifname); // 6rd is ENABLED/6to4 is ENABLED/6in4 is ENABLED/ULA is ENABLED
+-	}
+-
+-	snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep Global |awk '{print $3}' > /tmp/wanip\n", m_ifname);
+-	system(m_msg);
+-
+-	// chk wan ip.
+-	FILE *fp_wanip = NULL;
+-	char m_wanip[50] = "";
+-
+-	if((fp_wanip = fopen("/tmp/wanip", "r")) == NULL ){
+-		fprintf(stderr, "fail to open tmpwanip file\n");
+-		exit(1);
+ 	}
+-	fscanf(fp_wanip,"%s",m_wanip);
+-	fclose(fp_wanip);
+-
+-	if ( strstr(m_wanip, ":") == NULL ) {
+-		//syslog(LOG_USER|LOG_DEBUG, "WAN IP is not exist");
+-		return 1; // wanip EMPTY.
+-	} else {
+-		//syslog(LOG_USER|LOG_DEBUG, "WAN IP is exist");
+-		//return 0; // wanip EXIST.
+-	}
+-
+-	//check wan link status(1: down, 0:up)
+-	FILE *fp_wanlinkstatus= NULL;
+-	char m_wanlinkstatus[128]= "";
+-	sprintf(m_wanlinkstatus, "/sbin/swconfig dev eth0 port 5 get link | grep down -c");
+-	if((fp_wanlinkstatus = popen(m_wanlinkstatus, "r")) == NULL ){
+-		fprintf(stderr, "fail to fopen /sbin/swconfig");
+-		return 1; // WenHsien 2015.1124: During reboot, fopen /tmp/wan_link_status will always FAIL, so default to EXIST.
+-	}
+-	if(fgets(m_wanlinkstatus, 128, fp_wanlinkstatus)==NULL){
+-		fprintf(stderr, "fail to read popen fd");
+-		return 1;
+-	}
+-	pclose(fp_wanlinkstatus);
+-	if (atoi(m_wanlinkstatus)==1) {
+-		//syslog(LOG_USER|LOG_DEBUG, "WAN link status is 1");
+-		return 1; // wanip EMPTY.
+-	} else {
+-		//syslog(LOG_USER|LOG_DEBUG, "WAN link status is 0");
+-		//return 0; // wanip EXIST.
+-	}
+-
+-	/*
+-	 *Kerker add 2016/01/13
+-	 *Set ralt zero when no default route
+-	 */
+-	if(system("ip -6 route|grep default")!=0){
+-		return 1;
+-	}
+-	//wan interface is up, v6 IP is exist, wan link is 1
+-	return 0;
++	dlog(LOG_INFO, 5, "Backup RA lifetime %d", ra_lifetime);
+ 
++	return;
+ }
+-#endif
+ 
+-void set_prefix_lifetimes_to_zero(struct Interface *iface)
++void set_ra_lifetime_to_zero(struct Interface *iface)
+ {
+-	struct AdvPrefix *prefix;
+-	char pfx_str[INET6_ADDRSTRLEN];
+-
+-
+-	flog(LOG_INFO, "Resetting prefix lifetimes");
++	dlog(LOG_INFO, 5, "Set RA lifetime to 0");
+ 
+-	if (!iface) return;
++	if (!iface)  return;
+ 
+ 	for (iface; iface; iface = iface->next)
+ 	{
+-		if (!iface) return;
+-
+-		iface->AdvDefaultLifetime_bak= iface->AdvDefaultLifetime;	//backup AdvDefaultLifetime
++		if (!iface)  return;
+ 		iface->AdvDefaultLifetime = 0;
+-
+-		for (prefix = iface->AdvPrefixList; prefix;
+-							prefix = prefix->next)
+-		{
+-			if (!prefix)return;
+-
+-			print_addr(&prefix->Prefix, pfx_str);
+-			dlog(LOG_DEBUG, 4, "%s/%u%%%s plft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_preferredlft, prefix->AdvPreferredLifetime);
+-			dlog(LOG_DEBUG, 4, "%s/%u%%%s vlft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_validlft, prefix->AdvValidLifetime);
+-			prefix->curr_validlft =
+-					0;
+-			prefix->curr_preferredlft =
+-					0;
+-		}
+-
+ 	}
+-
+ }
+ 
+-void set_prefix_lifetimes_back(struct Interface *iface)
++void rvt_ra_lifetime(struct Interface *iface)
+ {
+-	struct AdvPrefix *prefix;
+-	char pfx_str[INET6_ADDRSTRLEN];
+-
+-
+-	flog(LOG_INFO, "Resetting prefix lifetimes");
+-
+-	if (!iface) return;
+-
+-	for (iface; iface; iface = iface->next)
+-	{
+-		if (!iface) return;
+-
+-		iface->AdvDefaultLifetime= iface->AdvDefaultLifetime_bak;	//restore AdvDefaultLifetime
++	int ra_lifetime = -1;
+ 
+-		for (prefix = iface->AdvPrefixList; prefix;
+-							prefix = prefix->next)
++	if (iface) {
++		for (iface; iface; iface = iface->next)
+ 		{
+-			if (!prefix) return;
+-
+-			print_addr(&prefix->Prefix, pfx_str);
+-			dlog(LOG_DEBUG, 4, "%s/%u%%%s plft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_preferredlft, prefix->AdvPreferredLifetime);
+-			dlog(LOG_DEBUG, 4, "%s/%u%%%s vlft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_validlft, prefix->AdvValidLifetime);
+-			prefix->curr_validlft =
+-					prefix->AdvValidLifetime;
+-			prefix->curr_preferredlft =
+-					prefix->AdvPreferredLifetime;
++			if (!iface)  return;
++			iface->AdvDefaultLifetime = iface->AdvDefaultLifetime_bak;	//restore AdvDefaultLifetime
++			ra_lifetime = iface->AdvDefaultLifetime_bak;
+ 		}
+ 	}
++	dlog(LOG_INFO, 5, "Revert RA lifetime to %d", ra_lifetime);
++
++	return;
+ }
+ 
+ static void
+ send_ra_inc_len(size_t *len, int add)
+ {
+ 	*len += add;
++
+ 	if(*len >= MSG_SIZE_SEND)
+ 	{
+ 		flog(LOG_ERR, "Too many prefixes, routes, rdnss or dnssl to fit in buffer.  Exiting.");
+@@ -486,17 +336,15 @@ time_diff_secs(const struct timeval *tim
+ 	time_t secs_diff;
+ 
+ 	secs_diff = time_x->tv_sec - time_y->tv_sec;
+-	if ((time_x->tv_usec - time_y->tv_usec) >= 500000)
+-		secs_diff++;
++
++	if ((time_x->tv_usec - time_y->tv_usec) >= 500000)  secs_diff++;
+ 
+ 	return secs_diff;
+-	
+ }
+ 
+ static void
+ decrement_lifetime(const time_t secs, uint32_t *lifetime)
+ {
+-
+ 	if (*lifetime > secs) {
+ 		*lifetime -= secs;	
+ 	} else {
+@@ -509,9 +357,7 @@ static void cease_adv_pfx_msg(const char
+ 	char pfx_str[INET6_ADDRSTRLEN];
+ 
+ 	print_addr(pfx, pfx_str);
+-
+ 	dlog(LOG_DEBUG, 3, "Will cease advertising %s/%u%%%s, preferred lifetime is 0", pfx_str, pfx_len, if_name);
+-
+ }
+ 
+ int

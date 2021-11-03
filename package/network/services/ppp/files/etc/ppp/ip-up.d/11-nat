@@ -1,0 +1,4 @@
+#!/bin/sh
+echo `date` "load ppp 3g-nat config"
+iptables -t nat -D postrouting_rule_nat -o ppp0 -j MASQUERADE
+iptables -t nat -A postrouting_rule_nat -o ppp0 -j MASQUERADE

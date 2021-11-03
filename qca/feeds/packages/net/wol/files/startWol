@@ -1,0 +1,15 @@
+#!/bin/sh
+
+. /etc/functions.sh
+include /lib/config
+
+host_enabled=$(uci_get wol main enabled)
+	
+if [ "$host_enabled" == "1" ]; then
+	host_mac=$(cat /var/wol_host_mac)
+	host_port=$(uci_get wol main port)
+	#subnet_broadcast=$(uci_get wol main broadcast)
+	subnet_broadcast=$(ifconfig br-lan | awk '/Bcast/{print $3}' | awk -F ':' '{ print $2}')
+
+	/usr/bin/wol --host=$subnet_broadcast --port=$host_port $host_mac
+fi

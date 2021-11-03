@@ -1,0 +1,101 @@
+#!/bin/sh
+
+BOARD_DATA(){
+	/sbin/set_boardData
+}
+
+QCA_INSMOD(){
+	echo QCA_INSMOD replaced by qcawificfg80211.sh
+}
+
+QCA_RMMOD(){
+	echo QCA_RMMOD replaced by qcawificfg80211.sh
+}
+
+CHANNEL_INIT(){
+	##For NBG7815. In US set 5G default channel at 157. In EU set 5G default channel at 100.
+	countrycode=$(fw_printenv countrycode | awk -F"=" '{print $2}' | tr [a-f] [A-F])
+	firstboot_status=$(uci get system.main.init_country)
+
+	[ -z "$firstboot_status" -o "$firstboot_status" == "1" ] && {
+		case "$countrycode" in
+			ff|FF) country="US"
+				uci set wireless.wifi0.channel=157
+			;;
+			e1|E1) country="CH" 
+				uci set wireless.wifi0.channel=100
+			;;
+			ce|CE) country="CA"				
+				uci set wireless.wifi0.channel=157
+			;;
+			ee|EE) country="TW"		
+				uci set wireless.wifi0.channel=157
+			;;
+		esac
+
+		uci set wireless.wifi1.channel=0
+		uci set wireless.wifi0.country=$country
+		uci set wireless.wifi1.country=$country
+		uci commit wireless
+
+		uci set system.main.init_country=0
+		uci commit system
+	}
+
+	case "$countrycode" in
+	ff|FF)
+		uci set wireless.wifi0.country=US
+		uci set wireless.wifi1.country=US
+
+		uci commit wireless
+	;;
+	*)
+		country=$(uci get wireless.wifi0.country)
+		case "$country" in
+		CA|TW|US)
+		;;
+		RU)
+			channel=$(uci get wireless.wifi0.channel)
+			if [ $channel -ge 100 ] && [ $channel -le 128 ] ; then
+				uci set wireless.wifi0.channel=0
+			fi
+		;;
+		CH)
+			channel=$(uci get wireless.wifi0.channel)
+			if [ $channel -ge 149 ]; then
+				uci set wireless.wifi0.channel=0
+			fi 
+		;;
+		*)
+			case "$countrycode" in
+				ce|CE) country="CA" ;;
+				ee|EE) country="TW" ;;
+				e1|E1)
+					country="CH"
+				;;
+			esac
+
+			uci set wireless.wifi0.channel=0
+			uci set wireless.wifi1.channel=0
+			uci set wireless.wifi0.country=$country
+			uci set wireless.wifi1.country=$country
+		;;
+		esac
+		uci commit wireless
+	;;
+	esac
+}
+case "$1" in
+	BOARD_DATA)
+		BOARD_DATA
+	;;
+	QCA_INSMOD)
+		QCA_INSMOD
+	;;
+	QCA_RMMOD)
+		QCA_RMMOD
+	;;
+	CHANNEL)
+		CHANNEL_INIT
+	;;
+esac

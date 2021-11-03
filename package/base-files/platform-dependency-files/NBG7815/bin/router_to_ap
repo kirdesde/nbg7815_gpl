@@ -1,0 +1,93 @@
+#!/bin/sh
+
+# /tmp/switch_mode, flag for start_auto_ip_change restart network at the same time
+touch /tmp/switch_mode
+
+# backup current network setting
+uci set network.general.backup_lan_ip=$(uci get network.lan.ipaddr)
+uci set network.general.backup_lan_mask=$(uci get network.lan.netmask)
+uci set network.general.backup_lan_gw=$(uci get network.lan.gateway)
+uci set network.general.backup_wan_ip=$(uci get network.wan.ipaddr)
+uci set network.general.backup_wan_mask=$(uci get network.wan.netmask)
+uci set network.general.backup_wan_gw=$(uci get network.wan.gateway)
+uci set network.general.backup_wan_proto=$(uci get network.wan.proto)
+uci set network.general.backup_wan_mtu=$(uci get network.wan.mtu)
+
+# get the past ap mode network setting
+old_aplan_ip=$(uci get network.general.backup_aplan_ip)
+old_aplan_mask=$(uci get network.general.backup_aplan_mask)
+old_aplan_gw=$(uci get network.general.backup_aplan_gw)
+old_aplan_proto=$(uci get network.general.backup_aplan_proto)
+
+###### start
+uci set network.wan.ifname=""
+uci set network.wan.proto=""
+uci set network.wan.mtu=""
+uci set network.lan.ifname="eth0 eth1 eth2 eth3 eth4 eth5"
+uci set network.lan.ipaddr="$old_aplan_ip"
+uci set network.lan.netmask="$old_aplan_mask"
+uci set network.lan.gateway="$old_aplan_gw"
+uci set network.lan.proto="$old_aplan_proto"
+uci set network.lan.ipaddr="$old_aplan_ip"
+uci set network.lan.hairpin=0
+# ip alias setting
+if [ "$old_aplan_proto" = "static" ]; then
+  uci set network.alias.proto="none"
+  uci set network.alias.interface=""
+else
+  uci set network.alias.proto="static"
+  uci set network.alias.interface="lan"
+fi
+uci commit network
+
+uci set system.main.system_mode=2
+uci set system.main.operation_role="controllee"
+uci commit system
+
+guest_wifi24g=$(uci get wireless.ath1.disabled)
+if [ "$guest_wifi24g" == "0" ]; then
+  uci set wireless.ath1.disabled=1
+  uci set wireless.ath1.rt_mode_disabled=0
+else
+  uci set wireless.ath1.rt_mode_disabled=1
+fi
+
+guest_wifi5g=$(uci get wireless.ath11.disabled)
+if [ "$guest_wifi5g" == "0" ]; then
+  uci set wireless.ath11.disabled=1
+  uci set wireless.ath11.rt_mode_disabled=0
+else
+  uci set wireless.ath11.rt_mode_disabled=1
+fi
+
+wds_wifi24g_ap=$(uci get wireless.ath2.disabled)
+if [ "$wds_wifi24g_ap" == "0" ]; then
+  uci set wireless.ath2.disabled=1
+  uci set wireless.ath2.rt_mode_disabled=0
+else
+  uci set wireless.ath2.rt_mode_disabled=1
+fi
+
+wds_wifi5g_ap=$(uci get wireless.ath12.disabled)
+if [ "$wds_wifi5g_ap" == "0" ]; then
+  uci set wireless.ath12.disabled=1
+  uci set wireless.ath12.rt_mode_disabled=0
+else
+  uci set wireless.ath12.rt_mode_disabled=1
+fi
+
+wds_wifi24g_sta=$(uci get wireless.ath3.ap_mode_disabled)
+if [ "$wds_wifi24g_sta" == "0" ]; then
+  uci set wireless.ath3.disabled=0
+fi
+
+wds_wifi5g_sta=$(uci get wireless.ath13.ap_mode_disabled)
+if [ "$wds_wifi5g_sta" == "0" ]; then
+  uci set wireless.ath13.disabled=0
+fi
+
+uci commit wireless
+
+/bin/sync
+/sbin/zyxel_led_ctrl Reboot
+reboot -f

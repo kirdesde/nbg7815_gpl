@@ -1,0 +1,68 @@
+#!/bin/sh
+# Copyright (C) 2006 OpenWrt.org
+
+. /etc/functions.sh
+include /lib/config
+
+#sleep 3
+
+CONF_FILE=/tmp/igmpproxy.conf
+IGMP_OPTS="-d -v -v"
+
+config_load network
+config_get proto wan proto
+
+igmpEnabled=$(uci_get igmpproxy general igmpEnabled)
+
+if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+WAN="$proto"-wan
+DISABLED_IF=`uci get network.wan.ifname`
+else
+WAN=`uci get network.wan.ifname`
+#DISABLED_IF="'$proto'-wan"
+fi
+
+## force IGMP version to v2
+echo "2" > /proc/sys/net/ipv4/conf/default/force_igmp_version
+echo "2" > /proc/sys/net/ipv4/conf/$WAN/force_igmp_version
+echo "2" > /proc/sys/net/ipv4/conf/br-lan/force_igmp_version
+
+if [ "$igmpEnabled" = "enable" ]; then
+    igmp_exist=$(ps | grep 'igmpproxy' | grep -v 'grep' | awk '{print $1}')
+	if [ -n "$igmp_exist" ]; then
+		#start-stop-daemon -K -x /usr/sbin/igmpproxy -q
+		killall igmpproxy
+	fi
+	
+	echo "##------------------------------------------------------"  > $CONF_FILE
+	echo "## Enable Quickleave mode (Sends Leave instantly)" >> $CONF_FILE
+	echo "##------------------------------------------------------" >> $CONF_FILE
+	echo "quickleave" >> $CONF_FILE
+
+	echo "##------------------------------------------------------" >> $CONF_FILE
+	echo "## Configuration for eth0 (Upstream Interface)"  >> $CONF_FILE
+	echo "##------------------------------------------------------" >> $CONF_FILE
+	echo "phyint $WAN upstream  ratelimit 0  threshold 1" >> $CONF_FILE
+	echo "altnet 0.0.0.0/0" >> $CONF_FILE
+	##echo "altnet 192.168.100.0/24" >> $CONF_FILE
+
+	echo "##------------------------------------------------------"  >> $CONF_FILE
+	echo "## Configuration for eth1 (Downstream Interface)" >> $CONF_FILE
+	echo "##------------------------------------------------------" >> $CONF_FILE
+	echo "phyint br-lan downstream  ratelimit 0  threshold 1" >> $CONF_FILE
+	##echo "phyint br-guest1 downstream  ratelimit 0  threshold 1" >> $CONF_FILE
+
+	echo "##------------------------------------------------------" >> $CONF_FILE
+	echo "## Configuration for eth2 (Disabled Interface)" >> $CONF_FILE
+	echo "##------------------------------------------------------" >> $CONF_FILE
+	[ -n "$DISABLED_IF" ] && echo "phyint $DISABLED_IF disabled" >> $CONF_FILE
+		
+	#start-stop-daemon -S -x /usr/sbin/igmpproxy -b /tmp/igmpproxy.conf
+	/usr/sbin/igmpproxy -v /tmp/igmpproxy.conf &
+elif [ "$igmpEnabled" = "disable" ]; then
+	#start-stop-daemon -K -x /usr/sbin/igmpproxy -q
+	killall igmpproxy
+fi
+
+## iptables app reorder (need to bypass multicast stream on DoS)
+/lib/firewall/iptables_app_order

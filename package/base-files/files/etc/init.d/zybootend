@@ -1,0 +1,122 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2006 OpenWrt.org
+
+START=99
+
+proto=$(uci get network.wan.proto)
+if [ "$proto" = "pppoe" ] || [ "$proto" = "pptp" ];then
+        wan_iface="$proto"-wan
+else
+        wan_iface=$(uci get network.wan.ifname)
+fi
+
+boot(){
+	product_name=$(uci_get system main product_name)
+
+	if [ "$product_name" == "NBG7815" ]; then
+		/bin/wifi_channel_monitor &
+	else
+		/bin/wifi_channel_monitor once &
+	fi
+
+	## resend IPv6 RS(Solicitation) when no global ip
+	basicif=$(uci get dhcp6c.basic.interface)
+	IsIpv6=$(uci get network.$basicif.ipv6)
+	if [ -z "$IsIpv6" -o "$IsIpv6" == "1" ];then
+		v6wan_ip=$(ifconfig $wan_iface | awk '/Global/{print $3}')
+		if [ ! $v6wan_ip  proto != "pppoe" ];then
+			echo 1 > /proc/sys/net/ipv6/conf/$wan_iface/disable_ipv6
+			echo 0 > /proc/sys/net/ipv6/conf/$wan_iface/disable_ipv6
+		fi
+	fi
+
+	#watch -tn 10 /bin/wifi_assoc_monitor 1>/dev/null 2>&1 &
+	/bin/wifi_assoc_monitor 1>/dev/null 2>&1 &
+	#watch -tn 10 /etc/zy1905/zy1905_5G_Info 1>/dev/null 2>&1 &
+
+	## Remove bootflag
+	rm /tmp/bootflag
+
+	#/usr/sbin/coredump_mangement.sh start
+
+	# /etc/init.d/parentalControl restart
+	/usr/sbin/llmnrd -d -H wpad
+	/sbin/parsePort.sh
+	#check_guest_wifi_bonus
+
+	/sbin/zyxel_led_ctrl BootFinish &
+	/usr/sbin/WanPort_monitor &
+
+	/sbin/zapiBLEService.sh start &
+
+	#/etc/init.d/APPNotification start &
+
+	#hyd_monitor &
+
+	# cyber-security
+	#if [ ! -f /etc/FWupgradeTool/merge_cyber_security_flag ];then
+	#	if [ -f /usr/bin/merge_cyber_security_config ];then
+	#		merge_cyber_security_config
+	#		touch /etc/FWupgradeTool/merge_cyber_security_flag
+	#	fi
+	#fi
+
+	## check mode,if AP/UR,exit
+	sys_mode=$(get_sys_mode)
+	[ "$sys_mode" != "1" ] && {
+		watch -tn 5 /bin/link_monitor_AP 1>/dev/null 2>&1 &
+		#watch -tn 60 /bin/zapi_monitor_AP 1>/dev/null 2>&1 &		
+		exit 0
+	}
+	watch -tn 2 /bin/link_monitor 1>/dev/null 2>&1 &
+	#watch -tn 60 /bin/zapi_monitor 1>/dev/null 2>&1 &
+
+}
+
+start(){
+
+	## Clean Web re-direct rules of iptable after login eaZy123
+	System_eaZy123_flag=$(uci_get system main eaZy123)
+	[ "$System_eaZy123_flag" == "1" ] && {
+		iptables -t nat -D PREROUTING -j  WEB_REDIRECT
+		iptables -t nat -F WEB_REDIRECT
+		iptables -t nat -X WEB_REDIRECT
+	}
+
+}
+
+check_guest_wifi_bonus(){
+	wifi24G=$(uci get wireless.iface.wifi24G)
+	wifi5G=$(uci get wireless.iface.wifi5G)
+
+	for ath in ath1 ath2 ath3 ath11 ath12 ath13
+	do
+		bonus_time=$(uci get wireless.$ath.bonus_time)
+		device=$(uci get wireless.$ath.device)
+
+		if [ "$wifi24G" == "$device" ]; then
+			DEV="24G"
+			if [ "$wifi24G" == "wifi1" ]; then
+				spilt="4"
+			else
+				spilt="3"
+			fi
+		elif [ "$wifi5G" == "$device" ]; then
+			DEV="5G"
+			if [ "$wifi5G" == "wifi1" ]; then
+				spilt="4"
+			else
+				spilt="3"
+			fi
+		fi
+
+		if [ -n "$bonus_time" ]; then
+			echo 1 > /tmp/reload_bonus
+			/bin/guestWifiTimer.sh add_rule "${ath:$spilt}" "$DEV" "$bonus_time"
+		fi
+	done
+	if [ -e "/tmp/reload_bonus" ];then
+		rm /tmp/reload_bonus
+		watch -tn 1800 /bin/check_guest_wifi_bonus.sh 1>/dev/null 2>&1 &
+	fi
+}

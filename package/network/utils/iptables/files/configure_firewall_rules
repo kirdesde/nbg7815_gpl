@@ -1,0 +1,170 @@
+#!/bin/sh
+echo ""
+number=`uci get $1.general.number`
+proto=`uci get network.wan.proto`
+if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+WAN="$proto"-wan
+else
+WAN=`uci get network.wan.ifname`
+fi
+
+LAN_TYPE=`uci get network.lan.type`
+if [ "$LAN_TYPE" == "bridge" ];then
+INTERFACE=`uci get network.lan.ifname`
+INT1=`echo $INTERFACE | cut -d " " -f1`
+INT2=`echo $INTERFACE | cut -d " " -f2`
+INT3=`echo $INTERFACE | cut -d " " -f3`
+else
+LAN=`uci get network.lan.ifname`
+WIFI=`uci get network.wifi.ifname`
+fi
+
+ruleid=1
+while [ "$ruleid" -le "$number" ]
+do
+iniface=`uci get $1.rule$ruleid.iniface`
+outiface=`uci get $1.rule$ruleid.outiface`
+target=`uci get $1.rule$ruleid.target`
+chain=`uci get $1.rule$ruleid.chain`
+#wanproto=`uci get network.wan.proto`
+#case "$wanproto" in
+case "$proto" in
+  static) wanip=`uci get network.wan.ipaddr`;;
+  dhcp) wanip=`ifconfig $WAN | grep "inet addr" | cut -d: -f 2 | sed s/Bcast//g` ;;
+  pppoe) wanip=`ifconfig $WAN | grep "inet addr" | cut -d: -f 2 | sed s/Bcast//g` ;;
+  ppptp) wanip=`ifconfig $WAN | grep "inet addr" | cut -d: -f 2 | sed s/Bcast//g` ;;	
+esac
+localport=`uci get $1.rule$ruleid.localport`
+publicport=`uci get $1.rule$ruleid.publicport`
+localip=`uci get firewall.general.ipaddr`
+port=`uci get $1.rule$ruleid.port`
+
+[ -z "$iniface" ] || inifname=`uci get network.$iniface.ifname`
+[ "$iniface" == "wan" -a "$proto" == "pppoe" ] && inifname="$WAN"
+[ "$iniface" == "wan" -a "$proto" == "pptp" ] && inifname="$WAN"
+[ "$iniface" == "lan" ] && {
+LAN_TYPE=`uci get network.lan.type`
+if [ "$LAN_TYPE" == "bridge" ];then
+INTERFACE=`uci get network.lan.ifname`
+inifname1=`echo $INTERFACE | cut -d " " -f1`
+inifname2=`echo $INTERFACE | cut -d " " -f2`
+inifname3=`echo $INTERFACE | cut -d " " -f3`
+else
+inifname1=`uci get network.lan.ifname`
+inifname2=`uci get network.wifi.ifname`
+fi
+}
+
+[ -z "$outiface" ] || outifname=`uci get network.$outiface.ifname`
+[ "$outiface" == "wan" -a "$proto" == "pppoe" ] && outifname="$WAN"
+[ "$outiface" == "wan" -a "$proto" == "pptp" ] && outifname="$WAN"
+[ "$outiface" == "lan" ] && {
+LAN_TYPE=`uci get network.lan.type`
+if [ "$LAN_TYPE" == "bridge" ];then
+INTERFACE=`uci get network.lan.ifname`
+outifname1=`echo $INTERFACE | cut -d " " -f1`
+outifname2=`echo $INTERFACE | cut -d " " -f2`
+outifname3=`echo $INTERFACE | cut -d " " -f3`
+else
+outifname1=`uci get network.lan.ifname`
+outifname2=`uci get network.wifi.ifname`
+fi
+}
+
+if [ "$chain" == "forward" ]; then
+[ -z "$inifname1" -o -z "$outifname1" ] || {
+cmd=iptables\ -A\ FORWARD\ -i\ $inifname1\ -o\ $outifname1\ -j\ $target
+echo "$cmd" | sh
+}
+[ -z "$inifname1" -o -z "$outifname2" ] || {
+cmd=iptables\ -A\ FORWARD\ -i\ $inifname1\ -o\ $outifname2\ -j\ $target
+echo "$cmd" | sh
+}
+[ -z "$inifname1" -o -z "$outifname3" ] || {
+cmd=iptables\ -A\ FORWARD\ -i\ $inifname1\ -o\ $outifname3\ -j\ $target
+echo "$cmd" | sh
+}
+[ -z "$inifname2" -o -z "$outifname1" ] || {
+cmd=iptables\ -A\ FORWARD\ -i\ $inifname2\ -o\ $outifname1\ -j\ $target
+echo "$cmd" | sh
+}
+[ -z "$inifname2" -o -z "$outifname2" ] || {
+cmd=iptables\ -A\ FORWARD\ -i\ $inifname2\ -o\ $outifname2\ -j\ $target
+echo "$cmd" | sh
+}
+[ -z "$inifname2" -o -z "$outifname3" ] || {
+cmd=iptables\ -A\ FORWARD\ -i\ $inifname2\ -o\ $outifname3\ -j\ $target
+echo "$cmd" | sh
+}
+[ -z "$inifname3" -o -z "$outifname1" ] || {
+cmd=iptables\ -A\ FORWARD\ -i\ $inifname3\ -o\ $outifname1\ -j\ $target
+echo "$cmd" | sh
+}
+[ -z "$inifname3" -o -z "$outifname2" ] || {
+cmd=iptables\ -A\ FORWARD\ -i\ $inifname3\ -o\ $outifname2\ -j\ $target
+echo "$cmd" | sh
+}
+[ -z "$inifname3" -o -z "$outifname3" ] || {
+cmd=iptables\ -A\ FORWARD\ -i\ $inifname3\ -o\ $outifname3\ -j\ $target
+echo "$cmd" | sh
+}
+fi
+
+if [ "$chain" == "input" ]; then
+[ -z "$iniface1" ] || cmd=iptables\ -A\ LAN_ACCEPT\ -i\ $inifname1\ -j\ $target
+[ -z "$iniface2" ] || cmd=iptables\ -A\ LAN_ACCEPT\ -i\ $inifname2\ -j\ $target
+[ -z "$iniface3" ] || cmd=iptables\ -A\ LAN_ACCEPT\ -i\ $inifname3\ -j\ $target
+[ -z "$outiface1" ] || cmd=iptables\ -A\ LAN_ACCEPT\ -o\ $outifname1\ -j\ $target
+[ -z "$outiface2" ] || cmd=iptables\ -A\ LAN_ACCEPT\ -o\ $outifname2\ -j\ $target
+[ -z "$outiface3" ] || cmd=iptables\ -A\ LAN_ACCEPT\ -o\ $outifname3\ -j\ $target
+echo "$cmd" | sh
+fi
+
+if [ "$target" == "portfwd" ]; then
+[ -z "$localip" ] || {
+cmd=iptables\ -t\ nat\ -A\ prerouting_rule\ -p\ tcp\ -d\ $wanip\ --dport\ $publicport\ -j\ DNAT\ --to\ $localip:$localport
+echo "$cmd" | sh
+cmd=iptables\ -t\ nat\ -A\ prerouting_rule\ -p\ udp\ -d\ $wanip\ --dport\ $publicport\ -j\ DNAT\ --to\ $localip:$localport
+echo "$cmd" | sh
+cmd=iptables\ -A\ forwarding_rule\ -p\ tcp\ -d\ $localip\ --dport\ $localport\ -j\ ACCEPT
+echo "$cmd" | sh
+cmd=iptables\ -A\ forwarding_rule\ -p\ udp\ -d\ $localip\ --dport\ $localport\ -j\ ACCEPT
+echo "$cmd" | sh
+}
+fi
+
+if [ "$target" == "lan2wan" ]; then
+[ -z "$LAN" ] || {
+cmd=iptables\ -A\ forwarding_rule\ -p\ tcp\ --dport\ $port\ -i\ $LAN\ -o\ $WAN\ -j\ ACCEPT
+echo "$cmd" | sh
+cmd=iptables\ -A\ forwarding_rule\ -p\ udp\ --dport\ $port\ -i\ $LAN\ -o\ $WAN\ -j\ ACCEPT
+echo "$cmd" | sh
+}
+[ -z "$WIFI" ] || {
+cmd=iptables\ -A\ forwarding_rule\ -p\ tcp\ --dport\ $port\ -i\ $WIFI\ -o\ $WAN\ -j\ ACCEPT
+echo "$cmd" | sh
+cmd=iptables\ -A\ forwarding_rule\ -p\ udp\ --dport\ $port\ -i\ $WIFI\ -o\ $WAN\ -j\ ACCEPT
+echo "$cmd" | sh
+}
+[ -z "$INT1" ] || {
+cmd=iptables\ -A\ forwarding_rule\ -p\ tcp\ --dport\ $port\ -i\ $INT1\ -o\ $WAN\ -j\ ACCEPT
+echo "$cmd" | sh
+cmd=iptables\ -A\ forwarding_rule\ -p\ udp\ --dport\ $port\ -i\ $INT1\ -o\ $WAN\ -j\ ACCEPT
+echo "$cmd" | sh
+}
+[ -z "$INT2" ] || {
+cmd=iptables\ -A\ forwarding_rule\ -p\ tcp\ --dport\ $port\ -i\ $INT2\ -o\ $WAN\ -j\ ACCEPT
+echo "$cmd" | sh
+cmd=iptables\ -A\ forwarding_rule\ -p\ udp\ --dport\ $port\ -i\ $INT2\ -o\ $WAN\ -j\ ACCEPT
+echo "$cmd" | sh
+}
+[ -z "$INT3" ] || {
+cmd=iptables\ -A\ forwarding_rule\ -p\ tcp\ --dport\ $port\ -i\ $INT3\ -o\ $WAN\ -j\ ACCEPT
+echo "$cmd" | sh
+cmd=iptables\ -A\ forwarding_rule\ -p\ udp\ --dport\ $port\ -i\ $INT3\ -o\ $WAN\ -j\ ACCEPT
+echo "$cmd" | sh
+}
+fi
+
+ruleid=`expr $ruleid + 1`
+done

@@ -1,0 +1,21 @@
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -2414,11 +2414,18 @@ client6_recvreply(ifp, dh6, len, optinfo
+ 		struct dhcp6_listval *d;
+ 		int i = 0;
+ 
++		char cmd[200]="";
++		snprintf(cmd, sizeof(cmd), "uci set radvd.dnssl=dnssl");system(cmd);
++		snprintf(cmd, sizeof(cmd), "uci set radvd.dnssl.interface=lan");system(cmd);
++
+ 		for (d = TAILQ_FIRST(&optinfo->dnsname_list); d;
+ 		     d = TAILQ_NEXT(d, link), i++) {
+ 			info_printf("Domain search list[%d] %s",
+ 			    i, d->val_vbuf.dv_buf);
++			snprintf(cmd, sizeof(cmd), "uci set radvd.dnssl.suffix=%s",
++				    d->val_vbuf.dv_buf);system(cmd);
+ 		}
++		snprintf(cmd, sizeof(cmd), "uci commit");system(cmd);
+ 	}
+ 
+ 	if (!TAILQ_EMPTY(&optinfo->ntp_list)) {

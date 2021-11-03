@@ -1,0 +1,110 @@
+#!/bin/sh
+
+. /lib/ipq806x.sh
+. /lib/functions.sh
+. /lib/zyxel.sh
+
+part_name=$(get_primary_header_partition)
+
+#--- LD   Version ----------
+fw_version=$(zyfw_dumphdr $part_name | awk '/Version/{print $2}')
+
+
+#--- Project Name & Product Model ----------
+board=$(ipq806x_board_name)
+fw_project_name=$(echo $board | tr a-z A-Z)
+
+
+#--- Bootbase Version ----------
+loader_ver=$(zyfw_dumphdr $part_name | awk '/Zld version/{print $3}')
+
+
+#--- Serial Number ----------
+serial_num=$(fw_printenv serialnum | awk -F"=" '{print $2}')
+
+
+#--- Default Country Code ----------
+countrycode=$(fw_printenv countrycode | awk -F"=" '{print $2}' | tr [a-f] [A-F])
+
+
+#--- Box ID ----------
+boxid=$(fw_printenv boxid | awk -F"=" '{print $2}')
+
+
+#--- Part NO ----------
+part_no=$(fw_printenv partno | awk -F"=" '{print $2}')
+
+
+#--- RomFile Checksum ----------
+#rm -f /tmp/romchksum
+#touch /tmp/romchksum
+#for file in /etc/config/*
+#do
+#        chksum $file | grep "checksum" | awk '{print $4}' >> /tmp/romchksum
+#done
+#romfile_checksum=$(chksum /tmp/romchksum | grep "checksum" | awk '{print $4}')
+romfile_checksum="ffff"
+
+
+#--- fw_checksum & RootFS Checksum ----------
+fw_checksum=$(zyfw_dumphdr $part_name | awk '/Fit Hash/{print $3}')
+
+
+#--- Kernel Checksum ----------
+#image_fw=$(cat /tmp/fw_mtd)
+#if [ "$image_fw" != "single" ]; then
+#image="daul_image"
+#else
+#image="single_image"
+#fi
+#if [ "$image" != "daul_image" ]; then
+#	ker_checksum=$(firmware_info | awk '/Kernel image checksum/{print $4}')
+#fi
+ker_checksum="ffff"
+
+
+#--- intf MAC ----------
+base_addr=$(fw_printenv ethaddr | awk -F"=" '{print $2}' |sed 's/"//g')
+first_addr_num=$(echo $base_addr | awk -F":" 'BEGIN{OFS=""}{print $1,$2,$3,$4,$5,$6}')
+lastchar=$(echo $first_addr_num | cut -c 12-12)
+other_addr_num=$(echo $first_addr_num | cut -c 1-11)
+case $lastchar in
+"0")
+lan_mac_num=$other_addr_num"0"
+wan_mac_num=$other_addr_num"1"
+wifi24g_mac_num=$other_addr_num"2"
+wifi5g_mac_num=$other_addr_num"3"
+wifi5g2_mac_num=$other_addr_num"4"
+last_addr_nums=$other_addr_num"5"
+;;
+"8")
+lan_mac_num=$other_addr_num"8"
+wan_mac_num=$other_addr_num"9"
+wifi24g_mac_num=$other_addr_num"A"
+wifi5g_mac_num=$other_addr_num"B"
+wifi5g2_mac_num=$other_addr_num"C"
+last_addr_nums=$other_addr_num"D"
+;;
+esac
+
+#--- Print data ----------
+printf "LD   Version                 : $fw_version\n"
+printf "Project Name	             : $fw_project_name\n"
+printf "Bootbase Version             : $loader_ver\n"
+printf "Product Model                : $fw_project_name\n"
+printf "Serial Number                : $serial_num\n"
+printf "First MAC Address            : $first_addr_num\n"
+printf "Last MAC Address             : $last_addr_nums\n"
+printf "LAN MAC Address              : $lan_mac_num\n"
+printf "WAN MAC Address              : $wan_mac_num\n"
+printf "2.4G MAC Address             : $wifi24g_mac_num\n"
+printf "5G MAC Address               : $wifi5g_mac_num\n"
+#printf "5G2 MAC Address              : $wifi5g2_mac_num\n"
+printf "BLE MAC Address              : $last_addr_nums\n"
+printf "MAC Address Quantity         : 08\n"
+printf "Default Country Code         : $countrycode\n"
+printf "Box ID                       : $boxid\n"
+printf "Part NO                      : $part_no\n"
+printf "RomFile Checksum             : $romfile_checksum\n"
+printf "Firmware Checksum            : $fw_checksum\n"
+

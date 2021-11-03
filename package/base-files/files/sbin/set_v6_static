@@ -1,0 +1,21 @@
+#!/bin/sh
+. /lib/functions.sh
+
+wanface=$(uci get dhcp6c.basic.interface)
+v6_proto=$(uci get network.$wanface.v6_proto)
+ifname=$(uci get network.$wanface.ifname) 
+ip6addr=$(uci get network.$wanface.ip6addr)
+prefixlen=$(uci get network.$wanface.prefixlen)
+gateway6=$(uci get network.$wanface.ip6gw)
+
+if [ "$v6_proto" == "static" ];then
+    ip -6 addr del $(ifconfig $ifname | awk '/Scope:Global/{print $3}' | awk NR==1) dev $ifname
+    ip -6 addr del $(ifconfig $ifname | awk '/Scope:Global/{print $3}' | awk NR==2) dev $ifname
+    ip -6 addr del $(ifconfig pppoe-$wanface | awk '/Scope:Global/{print $3}' | awk NR==1) dev $ifname
+    ip -6 addr del $(ifconfig pppoe-$wanface | awk '/Scope:Global/{print $3}' | awk NR==2) dev $ifname
+
+    ip6addr="$ip6addr/$prefixlen"
+    ifconfig $ifname add "$ip6addr"
+    ip -6 route del default dev $ifname
+    ip -6 route add default via $gateway6 dev $ifname
+fi

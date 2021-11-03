@@ -1,0 +1,40 @@
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -1023,7 +1023,7 @@ dad_check(ifp, iana_addr, dad_fail_addr,
+ }
+ 
+ 
+-static int
++int
+ set_plt_vlt_of_wan_ip(ifp)
+ 	struct dhcp6_if *ifp;
+ {
+--- a/addrconf.c
++++ b/addrconf.c
+@@ -209,6 +209,17 @@ update_address(ia, addr, dhcpifp, ctlp, 
+ 			}
+ 		}
+ 
++
++		// Set LTs while receiving a renew-reply WAN Global IP.WenHsien.2016.0520.
++		int count, set_count;
++		struct in6_addr iana_addr[64];
++		count = get_tentative_addr(iana_addr);
++
++		if (count == 0) { // no one is in DAD.
++			set_count = set_plt_vlt_of_wan_ip(dhcpifp);
++		}
++
++
+ 		/* set vlt plt of WAN Global IP */
+ //		char str[200]="";
+ //		sprintf(str, "ip -6 addr change %s dev %s preferred_lft %lu valid_lft %lu", in6addr2str(&addr.addr, 0), sa->dhcpif->ifname, addr.pltime, addr.vltime);
+--- a/dhcp6c.h
++++ b/dhcp6c.h
+@@ -38,5 +38,6 @@ extern void client6_send __P((struct dhc
+ 
+ #ifdef CLIENT_DECLINE_SUPPORT
+ extern struct dhcp6_timer *client6_dad_check __P((void *));
++extern int set_plt_vlt_of_wan_ip(struct dhcp6_if *);
+ #endif
+ 

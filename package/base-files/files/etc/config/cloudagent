@@ -1,0 +1,3 @@
+config cloudagent cloudagent
+	option site_flag 'production'
+	option do_unpair 1

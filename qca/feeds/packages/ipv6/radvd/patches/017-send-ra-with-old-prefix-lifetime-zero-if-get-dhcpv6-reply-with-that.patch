@@ -1,0 +1,31 @@
+--- a/radvd.c
++++ b/radvd.c
+@@ -383,6 +383,9 @@ main(int argc, char *argv[])
+ }
+ 
+ unsigned long g_lastChkWanCable_time_in_micros = 0;
++#ifndef TMP_FILE
++#define TMP_FILE "/tmp/radvd_oldpd"
++#endif
+ 
+ void main_loop(void)
+ {
+@@ -467,9 +470,18 @@ void main_loop(void)
+ 			break;
+ 		}
+ 
++		// radvd.sh reload config -> pkill -HUP radvd -> Will come here !!
+ 		if (sighup_received)
+ 		{
++			// notice client to expire old PD (if any) when calling pkill.
+ 			reload_config();
++
++			// clean old PD information immediately after reload the information.
++			if( access( TMP_FILE, F_OK ) != -1 ) {
++				system("rm /tmp/radvd_oldpd");
++				system("/etc/init.d/radvd reload config &");
++			}
++
+ 			sighup_received = 0;
+ 		}
+ 

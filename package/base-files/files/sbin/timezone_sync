@@ -1,0 +1,173 @@
+#!/bin/sh
+
+. /usr/share/libubox/jshn.sh
+
+#rms request info
+atsh=$(atsh)
+model_name=$(echo "$atsh" | grep 'Product Model' | awk '{print $4}')
+fw_version=$(echo "$atsh" | grep 'LD   Version' | awk '{print $4}')
+mac_address=$(echo "$atsh" | grep 'First MAC Address' | awk '{print $5}')
+serial_num=$(echo "$atsh" | grep 'Serial Number' | awk '{print $4}')
+
+unset timezone_response_json
+unset chk_timezone_retval
+unset region
+
+restart_wireless_schedule() {
+  /etc/init.d/wireless_scheduling restart
+  /etc/init.d/wireless_scheduling5G restart
+}
+
+daemon_exit() {
+  exit 0
+}
+
+auto_timezone_success() {
+  touch /tmp/autotimezone_success.flag
+}
+
+auto_timezone_failed() {
+  [ "$(ps | grep $0 | grep -v grep | grep -v '/bin/sh -c' | awk -v m_pid=$$ '{if ($1 != m_pid) print $0 }' | wc -l)" -gt 1 ] && daemon_exit
+  (sleep 60; $0 start) &
+  daemon_exit
+}
+
+chk_timezone() {
+  rm -f /tmp/autotimezone_success.flag
+
+  rms-cli -r "/v1/mycloud/$model_name/timezone" -f "fw_version=$fw_version&mac_address=$mac_address&serial_number=$serial_num" -o /tmp/timezone_response
+  timezone_response_json=$(cat /tmp/timezone_response)
+  rm -f /tmp/timezone_response
+  if [ -z "$timezone_response_json" ]; then
+    #echo "timezone response failed from rms." > /dev/console
+    rm -f /tmp/timezone_response.error
+    auto_timezone_failed
+  fi
+
+  json_load "$timezone_response_json"
+  json_get_var region timezone
+  timezone=$(tz_parser $region)
+
+  runing_TZ=$(cat /tmp/TZ)
+  if [ "$timezone" = "$runing_TZ" ]; then # same timezone
+    chk_timezone_retval="syncing" 
+    auto_timezone_success
+  else # not the same
+    chk_timezone_retval="not_syncing"
+    zlog 7 2 "the device is located in $region"
+  fi
+}
+
+sync_timezone(){
+  timezone_setting_from_rms
+  TZ_time=$(uci get time.main.timezone)
+  [ -z "$TZ_time" ] && TZ_time="UTC"
+
+  echo $TZ_time > /tmp/TZ
+  /bin/date -k
+}
+
+timezone_setting_from_rms() {
+  # check tzdata version
+  rms-cli -r "/v1/mycloud/$model_name/tzdata" -f "fw_version=$fw_version&mac_address=$mac_address&serial_number=$serial_num" -o /tmp/tzdata_response
+  tzdata_response_json=$(cat /tmp/tzdata_response)
+  rm -f /tmp/tzdata_response
+  if [ -z "$tzdata_response_json" ]; then
+    echo "tzdata response failed from rms."
+    rm -f /tmp/tzdata_response.error
+    auto_timezone_failed
+  fi
+
+  json_load "$tzdata_response_json"
+  json_get_var rms_tzversion version
+
+  tzdata_version=$(uci get time.main.tzdata_version)
+  if [ "$rms_tzversion" != "$tzdata_version" ]; then
+    #update tzdata
+    json_get_var url url
+    curl -sk "$url" > /tmp/tzdb-install.tar.gz
+    tar -zx -f /tmp/tzdb-install.tar.gz -C /tmp/
+
+    if [ -f /tmp/tzdb-install/usr/share/zoneinfo/"$region" ]; then
+      rm -rf /usr/share/zoneinfo
+      mv /tmp/tzdb-install/usr/share/zoneinfo /usr/share/zoneinfo
+      rm -rf /tmp/tzdb-install
+      rm -f /tmp/tzdb-install.tar.gz
+      update_tzdata="success"
+      /bin/sync
+    else # download or tar failed
+      update_tzdata="fail"
+      echo "update tzdata failed"
+      if [ ! -f /usr/share/zoneinfo/"$region" ]; then # old version tzdata is not exist
+        set_default_timezone
+        auto_timezone_failed
+      fi
+    fi
+  fi
+
+  timezone=$(tz_parser $region)
+  if [ -n "$timezone" ]; then # parser success
+    uci set time.main.auto_timezone="$timezone"
+    uci set time.main.timezone="$timezone"
+    uci set time.main.city="($timezone)"
+    uci set time.main.tzIndex="63"
+    if [ -n "$update_tzdata" ] && [ "$update_tzdata" = "success" ]; then
+      uci set time.main.tzdata_version="$rms_tzversion"
+    fi
+    uci commit time
+
+    uci set system.main.timezone="$timezone"
+    uci commit system
+    auto_timezone_success
+    /bin/sync
+  else
+    uci set time.main.tzdata_version=""
+    uci commit time
+    echo "Auto timezone failed"
+  fi
+}
+
+set_default_timezone() {
+  uci set time.main.auto_timezone="UTC"
+  uci set time.main.timezone="UTC"
+  uci set time.main.city="(UTC)"
+  uci set time.main.tzIndex="63"
+  uci commit time
+
+  uci set system.main.timezone="UTC"
+  uci commit system
+  /bin/sync
+}
+
+start_sync() {
+  chk_timezone
+  if [ "$chk_timezone_retval" = "not_syncing" ]; then
+    sync_timezone
+    restart_wireless_schedule
+  fi
+}
+
+usage() {
+  printf "Description: auto timezone setting\\n"
+  printf "Usage: $0 [boot|start|reload]\\n    NOTE: boot => sleep random time before setting\\n" "$0"
+}
+
+cmd=$1
+shift
+case "$cmd" in
+  boot)
+    sleep $((0x$(openssl rand -hex 1)%32))
+    start_sync
+  ;;
+  start)
+    start_sync
+  ;;
+  reload)
+    start_sync
+  ;;
+  *)
+    usage
+  ;;
+esac
+
+daemon_exit

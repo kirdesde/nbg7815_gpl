@@ -1,0 +1,23 @@
+#!/bin/sh
+. /etc/functions.sh
+include /lib/config
+
+check_printer_info() {
+        path="/dev/usb/lp0"
+        if [ ! -c "$path" ]; then
+                exit 1
+        fi
+        local usblp_num=$(cat /sys/kernel/debug/usb/devices | grep -n 'usblp' | sed -n '1p' | awk -F':' '{print $1}' | tr -d '\n')
+        local Printer_Name=$(cat /sys/kernel/debug/usb/devices | head -n $usblp_num | grep Product | tail -n 1 | awk -F'=' '{print $2}')
+        echo "$Printer_Name" > /var/printer_info
+}
+
+case "$ACTION" in
+        add)
+		check_printer_info
+        ;;
+        remove)
+		[ -f /var/printer_info ] && rm /var/printer_info
+        ;;
+esac
+

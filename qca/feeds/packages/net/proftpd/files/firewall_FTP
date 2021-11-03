@@ -1,0 +1,16 @@
+#!/bin/sh
+
+proto=$(uci get network.wan.proto)
+if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+	WAN="$proto"-wan
+else
+	WAN=$(uci get network.wan.ifname)
+fi
+
+/usr/sbin/iptables -F FTP_INPUT
+/usr/sbin/iptables -X FTP_INPUT
+/usr/sbin/iptables -N FTP_INPUT
+
+FTP_PORT=$(uci get proftpd.global.port)
+
+iptables -I FTP_INPUT -i $WAN -p tcp --dport $FTP_PORT -j DROP

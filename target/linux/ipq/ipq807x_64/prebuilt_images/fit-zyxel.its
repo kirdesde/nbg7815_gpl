@@ -1,0 +1,100 @@
+
+/dts-v1/;
+
+/ {
+        description = "Zyxel Firmware";
+
+        images {
+
+                sbl1 {
+                        description = "sbl1_nor.mbn";
+                        data = /incbin/("./sbl1_nor.mbn");
+                        type = "firmware";
+                        arch = "arm";
+                        compression = "none";
+                        hash@1 { algo = "crc32"; };
+                };
+
+                qsee {
+                        description = "tz.mbn";
+                        data = /incbin/("./tz.mbn");
+                        type = "firmware";
+                        arch = "arm";
+                        compression = "none";
+                        hash@1 { algo = "crc32"; };
+                };
+
+                devcfg {
+                        description = "devcfg.mbn";
+                        data = /incbin/("./devcfg.mbn");
+                        type = "firmware";
+                        arch = "arm";
+                        compression = "none";
+                        hash@1 { algo = "crc32"; };
+                };
+
+                rpm {
+                        description = "rpm.mbn";
+                        data = /incbin/("./rpm.mbn");
+                        type = "firmware";
+                        arch = "arm";
+                        compression = "none";
+                        hash@1 { algo = "crc32"; };
+                };
+
+                cdt-NBG7815 {
+                        description = "cdt-NBG7815_256M32_DDR3.bin";
+                        data = /incbin/("./cdt-NBG7815_256M32_DDR3.bin");
+                        type = "firmware";
+                        arch = "arm";
+                        compression = "none";
+                        hash@1 { algo = "crc32"; };
+                };
+
+                ethphyfw {
+                        description = "AQR_ethphyfw.mbn";
+                        data = /incbin/("./AQR_ethphyfw.mbn");
+                        type = "firmware";
+                        arch = "arm";
+                        compression = "none";
+                        hash@1 { algo = "crc32"; };
+                };
+
+                u-boot {
+                        description = "openwrt-ipq807x-u-boot.mbn";
+                        data = /incbin/("./openwrt-ipq807x-u-boot.mbn");
+                        type = "firmware";
+                        arch = "arm";
+                        compression = "none";
+                        hash@1 { algo = "crc32"; };
+                };
+
+                hlos {
+                        description = "openwrt-ipq-ipq807x_64-qcom-ipq807x-zyxel-fit-uImage.itb.padded";
+                        data = /incbin/("./openwrt-ipq-ipq807x_64-qcom-ipq807x-zyxel-fit-uImage.itb.padded");
+                        type = "firmware";
+                        arch = "arm";
+                        compression = "none";
+                        hash@1 { algo = "crc32"; };
+                };
+
+                rootfs {
+                        description = "openwrt-ipq-ipq807x_64-squashfs-root.img";
+                        data = /incbin/("./openwrt-ipq-ipq807x_64-squashfs-root.img");
+                        type = "firmware";
+                        arch = "arm";
+                        compression = "none";
+                        hash@1 { algo = "crc32"; };
+                };
+
+                wififw {
+                        description = "wifi_fw_squashfs_v2.img";
+                        data = /incbin/("./wifi_fw_squashfs_v2.img");
+                        type = "firmware";
+                        arch = "arm";
+                        compression = "none";
+                        hash@1 { algo = "crc32"; };
+                };
+
+        };
+};

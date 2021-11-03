@@ -1,0 +1,82 @@
+#!/bin/sh
+. /etc/functions.sh
+include /lib/config
+
+ip6tables(){
+	/usr/sbin/ip6tables -w "$@"
+}
+
+lock /tmp/.order_filter_ip6.lock
+
+LAN="br+"
+
+icmp_ping=$(uci_get firewall6 general pingEnabled)
+firewall_enable=$(uci_get firewall6 general filterEnabled)
+firewall_rule_count=$(uci_get firewall6 general rules_count)
+
+## reload icmp ping
+ip6tables -D INPUT -p ipv6-icmp -j input_icmp
+ip6tables -D FORWARD -p ipv6-icmp -j forwarding_icmp
+
+### insert ping filter on FORWARD chain (firewall need to be prior to icmp ping filter)
+ip6tables -I FORWARD -p ipv6-icmp -j forwarding_icmp
+
+## reload firewall chain (firewall need to be prior to icmp ping filter)
+ip6tables -D INPUT -j input_rule 2>/dev/null
+ip6tables -D FORWARD -j forwarding_rule_filter 2>/dev/null
+
+if [ "$firewall_enable" == "1" ]; then
+	ip6tables -A INPUT -j input_rule
+	ip6tables -I FORWARD -j forwarding_rule_filter
+fi
+
+### insert ping filter on INPUT chain (firewall need to be prior to icmp ping filter)
+ip6tables -A INPUT -p ipv6-icmp -j input_icmp
+
+## reload SPI
+ip6tables -D FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+ip6tables -D INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+ip6tables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+ip6tables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+## lan and local traffic must be accept by default, if there is exception rule, the default action will be ACCEPT
+ip6tables -D INPUT -j lan_local_default
+ip6tables -D FORWARD -i $LAN -j ACCEPT
+ip6tables -D INPUT -j ACCEPT
+ip6tables -D FORWARD -j ACCEPT
+ip6tables -D FORWARD -j DROP
+
+## reload parental control
+/sbin/parental_iptable.sh boot_ip6
+
+## reload firewall_blockdevice chain
+ip6tables -D INPUT -j blockdevice_input_rule 2>/dev/null
+ip6tables -D FORWARD -j blockdevice_filter 2>/dev/null
+ip6tables -I INPUT -j blockdevice_input_rule
+ip6tables -I FORWARD -j blockdevice_filter
+
+## reload RMMG_SSH_INPUT chain
+ip6tables -D INPUT -j RMMG_SSH_INPUT 2>/dev/null
+ip6tables -I INPUT -j RMMG_SSH_INPUT
+
+
+target=`uci get firewall6.general.target | tr '[a-z]' '[A-Z]'`
+ip6tables -D FORWARD -j DROP
+
+if [ "$firewall_enable" == "1" ]; then
+	if [ "$target" == "ACCEPT" ] ; then
+		ip6tables -A FORWARD -j DROP
+	fi
+	if [ $firewall_rule_count -eq 0 ]; then
+		ip6tables -A INPUT -j lan_local_default
+		ip6tables -A FORWARD -i $LAN -j ACCEPT
+	else
+		ip6tables -A INPUT -j ACCEPT
+		ip6tables -A FORWARD -j ACCEPT
+	fi
+else
+	ip6tables -A INPUT -j lan_local_default
+	ip6tables -A FORWARD -i $LAN -j ACCEPT
+fi
+
+lock -u /tmp/.order_filter_ip6.lock

@@ -1,0 +1,21 @@
+--- a/dhcp6c_ia.c
++++ b/dhcp6c_ia.c
+@@ -169,7 +169,6 @@ update_ia(iatype, ialist, ifp, serverid,
+ 					    "failed to update an address %s",
+ 					    in6addr2str(&siav->val_statefuladdr6.addr, 0));
+ 				}
+-				system("/etc/init.d/radvd restart");
+ 				break;
+ 			case DHCP6_LISTVAL_STCODE:
+ 				dprintf(LOG_INFO, FNAME,
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -1903,6 +1903,8 @@ client6_recvreply(ifp, dh6, len, optinfo
+ 		update_ia(IATYPE_NA, &optinfo->iana_list, ifp,
+ 		    &optinfo->serverID, ev->authparam);
+ 	}
++	// trigger radvd to get the latest prefix.
++	system("/etc/init.d/radvd restart");
+ 
+ 	dhcp6_remove_event(ev);
+ 

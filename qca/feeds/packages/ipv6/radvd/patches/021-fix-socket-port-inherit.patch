@@ -1,0 +1,19 @@
+--- a/socket.c	2018-01-17 14:55:19.378994900 +0800
++++ b/socket.c	2018-04-03 10:50:22.693901833 +0800
+@@ -17,6 +17,7 @@
+ #include "config.h"
+ #include "includes.h"
+ #include "radvd.h"
++#include <fcntl.h>
+ 
+ /* Note: these are applicable to receiving sockopts only */
+ #if defined IPV6_HOPLIMIT && !defined IPV6_RECVHOPLIMIT
+@@ -111,6 +112,8 @@
+ 		flog(LOG_ERR, "setsockopt(ICMPV6_FILTER): %s", strerror(errno));
+ 		return (-1);
+ 	}
++	/******avoid socket port inherit problem ******/
++	fcntl(sock, F_SETFD, fcntl(sock, F_GETFD) | FD_CLOEXEC);
+ 
+ 	return sock;
+ }

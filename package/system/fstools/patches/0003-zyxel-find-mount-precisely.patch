@@ -1,0 +1,12 @@
+Index: fstools-2016-01-10/libfstools/find.c
+===================================================================
+--- fstools-2016-01-10.orig/libfstools/find.c
++++ fstools-2016-01-10/libfstools/find.c
+@@ -90,6 +90,7 @@ find_mount_point(char *block, int mtd_on
+ 	while (fgets(line, sizeof(line), fp)) {
+ 		if (!strncmp(line, block, len)) {
+ 			char *p = &line[len + 1];
++			if ( p[0] == ' ' ) continue;
+ 			char *t = strstr(p, " ");
+ 
+ 			if (!t) {

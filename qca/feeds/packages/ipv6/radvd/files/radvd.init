@@ -1,0 +1,1106 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2008  Alina Friedrichsen <x-alina@gmx.net>
+. /etc/functions.sh
+
+##check mode,if AP/UR,exit
+sys_mode=$(get_sys_mode)
+[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] && exit 0
+
+RADVD_INTERFACE_STRING_OPTIONS='MaxRtrAdvInterval MinRtrAdvInterval MinDelayBetweenRAs AdvLinkMTU AdvReachableTime AdvRetransTimer AdvCurHopLimit AdvDefaultLifetime AdvDefaultPreference HomeAgentLifetime HomeAgentPreference'
+RADVD_INTERFACE_BOOLEAN_OPTIONS='IgnoreIfMissing AdvSendAdvert UnicastOnly AdvManagedFlag AdvOtherConfigFlag AdvSourceLLAddress AdvHomeAgentFlag AdvHomeAgentInfo AdvMobRtrSupportFlag AdvIntervalOpt'
+
+RADVD_PREFIX_STRING_OPTIONS='AdvValidLifetime AdvPreferredLifetime'
+RADVD_PREFIX_BOOLEAN_OPTIONS='AdvOnLink AdvAutonomous AdvRouterAddr DecrementLifetimes'
+
+RADVD_ROUTE_STRING_OPTIONS='AdvRouteLifetime AdvRoutePreference'
+RADVD_ROUTE_BOOLEAN_OPTIONS=''
+
+RADVD_RDNSS_STRING_OPTIONS='AdvRDNSSPreference AdvRDNSSLifetime'
+RADVD_RDNSS_BOOLEAN_OPTIONS='AdvRDNSSOpen'
+
+validate_varname() {
+	local varname=$1
+	[ -z "$varname" -o "$varname" != "${varname%%[!A-Za-z0-9_]*}" ] && return 1
+	return 0
+}
+
+validate_ifname() {
+	local ifname=$1
+	[ -z "$ifname" -o "$ifname" != "${ifname%%[!A-Za-z0-9.:_-]*}" ] && return 1
+	return 0
+}
+
+validate_ip6addr() {
+	local ip6addr=$1
+	[ -z "$ip6addr" -o "$ip6addr" != "${ip6addr%%[!A-Fa-f0-9.:]*}" ] && return 1
+	return 0
+}
+
+validate_ip6prefix() {
+	local ip6prefix=$1
+	[ -z "$ip6prefix" -o "$ip6prefix" != "${ip6prefix%%[!A-Fa-f0-9./:]*}" ] && return 1
+	return 0
+}
+
+validate_radvd_string() {
+	local radvd_string=$1
+	[ -z "$radvd_string" -o "$radvd_string" != "${radvd_string%%[!a-z0-9.:_-]*}" ] && return 1
+	return 0
+}
+
+calc_masked_prefix() {
+	## Calculate a 64-bit prefix to set into LAN interface.
+	address=$1
+	prefixlen=$2
+	# Cut out the pure IPv6 address, and extend to the whole IPv6 address.
+	address=$(echo $address | awk -F'/' '{print $1}')
+	address=$(expand_ipv6 $address | awk -F':' '{print $1":"$2":"$3":"$4":"$5":"$6":"$7":"$8}')
+
+	local masked_prefix=""
+	local masked_address=$address		
+	## Step 1: get Three Subsets of IP (1~48, 49~64, and 65~128)
+	## loop for 4 times to find each subset.
+	tmpaddr=$address
+	pos=`expr index "$tmpaddr" :`
+	lengthofip1to48=$((lengthofip1to48+pos))
+	[ "$pos" = "0" ] && return 0
+	tmpaddr=${tmpaddr:$pos}
+
+	pos=`expr index "$tmpaddr" :`
+	lengthofip1to48=$((lengthofip1to48+pos))
+	[ "$pos" = "0" ] && return 0
+	tmpaddr=${tmpaddr:$pos}
+
+	pos=`expr index "$tmpaddr" :`
+	lengthofip1to48=$((lengthofip1to48+pos))
+	ifidpos=$lengthofip1to48
+	[ "$pos" = "0" ] && return 0
+	tmpaddr=${tmpaddr:$pos}
+
+	pos=`expr index "$tmpaddr" :`
+	ifidpos=$((ifidpos+pos))
+	[ "$pos" = "0" ] && return 0
+
+	## get ip subset 1
+	ipsubset1to48=${address::$lengthofip1to48}
+		
+	## get ip subset 2
+	ipsubset49to64=${tmpaddr::$((pos-1))}
+		
+	## get ip subset 3
+	tmpaddr=${address:$ifidpos}
+	pos=`expr index "$tmpaddr" :`
+	[ "$pos" = "1" ] && {
+		ifid=${tmpaddr:1}
+	} || {
+		ifid=$tmpaddr
+	}
+
+	## Step 2: get Masked Prefix and Composite a new IP for LAN interface.
+	## get value of ip49to64
+	value49to64=`printf "%d\n" 0x$ipsubset49to64`
+
+	## get the masked prefix 
+	zcount=$((64-prefixlen))
+	bit=1
+	$(( bit<<=zcount ))
+
+	res=0
+	tmpbit=""
+	for i in `seq $zcount 1 16`; do
+		[ $(($value49to64 & $bit)) != 0 ] && {
+			res=$((res + bit))
+			tmpbit=`printf "%s1" $tmpbit`
+		} || {
+			tmpbit=`printf "%s0" $tmpbit`
+		}
+		bit=$(( bit<<1 ))
+	done
+	maskedprefix49to64=`printf "%04x\n" $res`
+	masked_prefix=`printf "%s%s::\n" $ipsubset1to48 $maskedprefix49to64`	
+
+	## Composite a new IP for LAN interface.
+	masked_address=`printf "%s%s:%s" $ipsubset1to48 $maskedprefix49to64 $ifid`
+	echo $masked_prefix $masked_address
+}
+
+get_ifname() {
+	local interface=$1
+	validate_varname "$interface" || return 1
+	local cfgt
+	local ifname
+
+	scan_interfaces
+	config_get cfgt "$interface" TYPE
+	[ "$cfgt" != "interface" ] && return 1
+	config_get ifname "$interface" ifname
+	validate_ifname "$ifname" || return 1
+	printf '%s\n' "$ifname"
+
+	return 0
+}
+
+
+get_ip6addr() {
+	local ifname=$1
+	local scope=$2
+	local iproute2_scope
+	local ifconfig_scope
+	local ip6addr
+
+	case "$scope" in
+		host) iproute2_scope=host ifconfig_scope=Host;;
+		link) iproute2_scope=link ifconfig_scope=Link;;
+		site) iproute2_scope=site ifconfig_scope=Site;;
+		global) iproute2_scope=global ifconfig_scope=Global;;
+		"") get_ip6addr "$ifname" global || get_ip6addr "$ifname" site; return;;
+		*) return 1;;
+	esac
+
+	ip6addr=$(LANG=C ip -f inet6 -- addr show dev "$ifname" 2> /dev/null | sed -n -e 's/^  *inet6 \([A-Fa-f0-9.:]*[/][0-9]*\) scope '"$iproute2_scope"' $/\1/p' | head -n 1)
+	if [ -z "$ip6addr" ]; then
+		ip6addr=$(LANG=C ifconfig "$ifname" 2> /dev/null | sed -n -e 's/^  *inet6 addr: \([A-Fa-f0-9.:]*[/][0-9]*\) Scope:'"$ifconfig_scope"'$/\1/p')
+		[ -z "$ip6addr" ] && return 1
+	fi
+
+	printf '%s\n' "$ip6addr"
+
+	return 0
+}
+
+radvd_find_config_file() {	
+	local cfg=$1
+	validate_varname "$cfg" || return 0
+
+	config_get_bool ignore "$cfg" ignore 0
+	[ "$ignore" -ne 0 ] && return 0
+	config_get RADVD_CONFIG_FILE "$cfg" config_file
+
+	return 0
+}
+
+radvd_add_interface() {
+	local cfg=$1
+	validate_varname "$cfg" || return 0
+	local ignore
+	local interfaces
+	local interface
+	local list_interface
+	local exist
+
+	config_get_bool ignore "$cfg" ignore 0
+	[ "$ignore" -ne 0 ] && return 0
+
+	config_get interfaces "$cfg" interface
+	for interface in $interfaces; do
+		validate_varname "$interface" || continue
+		exist=0
+		for list_interface in $RADVD_INTERFACES; do
+			[ "$interface" = "$list_interface" ] && exist=1
+		done
+		[ "$exist" -eq 0 ] && RADVD_INTERFACES="$RADVD_INTERFACES $interface"
+	done
+
+	return 0
+}
+
+radvd_write_interface() {
+	local cfg=$1
+	validate_varname "$cfg" || return 0
+	local ignore
+	local interfaces
+	local interface
+	local name
+	local value
+
+	config_get_bool ignore "$cfg" ignore 0
+	[ "$ignore" -ne 0 ] && return 0
+
+	config_get interfaces "$cfg" interface
+	exist=0
+	for interface in $interfaces; do
+		[ "$INTERFACE" = "$interface" ] && exist=1
+	done
+	[ "$exist" -eq 0 ] && return 0
+
+	for name in $RADVD_INTERFACE_STRING_OPTIONS; do
+		config_get value "$cfg" "$name"
+		validate_radvd_string "$value" || continue
+		printf '\t%s %s;\n' "$name" "$value"
+	done
+
+	for name in $RADVD_INTERFACE_BOOLEAN_OPTIONS; do
+		config_get value "$cfg" "$name"
+		[ -z "$value" ] && continue
+		config_get_bool value "$cfg" "$name" 0
+		if [ "$value" -ne 0 ]; then 
+			printf '\t%s on;\n' "$name"
+		else
+			printf '\t%s off;\n' "$name"
+		fi
+	done
+
+	return 0
+}
+
+radvd_write_interface_tunneling() {
+	
+	printf '\tMaxRtrAdvInterval 120;\n'
+	printf '\tMaxRtrAdvInterval 60;\n'
+	printf '\tAdvSendAdvert on;\n'
+	printf '\tAdvManagedFlag off;\n'
+	printf '\tAdvOtherConfigFlag on;\n'
+	
+	return 0
+}
+
+radvd_write_prefix() {
+	local cfg=$1
+	validate_varname "$cfg" || return 0
+	local ignore
+	local interfaces
+	local interface
+	local prefixes
+	local prefix
+	local name
+	local value
+	local cfgt
+
+	config_get_bool ignore "$cfg" ignore 0
+	[ "$ignore" -ne 0 ] && {
+		return 0
+	}
+
+	config_get interfaces "$cfg" interface
+	exist=0
+	for interface in $interfaces; do
+		[ "$INTERFACE" = "$interface" ] && exist=1
+	done
+	[ "$exist" -eq 0 ] && {
+		return 0
+	}
+
+	## WenHsien.2014.0508: here should modify into the flow that could handle "multi IPs case"(?).
+	config_get prefixes "$cfg" prefix
+	if [ -z "$prefixes" ]; then
+		prefixes=$(get_ip6addr "$IFNAME")
+	fi
+
+	default_static_prefix=$(uci get network.general.v6lanstatic)
+	if [ "$default_static_prefix" == "1" ];then
+		prefixes=$(uci get default_lan_radvd.basic.address)
+	fi
+	
+	local prefix_count=0;
+	for prefix in $prefixes; do
+		prefix_count=$(($prefix_count+1))
+	
+	### Set Prefix: See if it is (Static Mode / DHCP Mode) on LAN.
+	## get ip and prefix
+	default_static_prefix=$(uci get network.general.v6lanstatic)
+	address=""
+	prefixlen=""
+	if [ -z "$default_static_prefix" -o "$default_static_prefix" == "0" ];then
+		##	(DHCP  mode)
+		group_lan=$(uci get dhcp6c.basic.intfGrp_write_prefix)
+		client_interface=$(uci get dhcp6c.basic.interface)
+		vlanIFNAME=$(uci get network.$client_interface.bind_LAN)
+
+		[ -z "$group_lan" ] && group_lan=0
+
+		if [ "$group_lan" == "1" ];then
+			grouped_lan_prefix=$(ifconfig $vlanIFNAME |grep $prefix | awk '/Global/{print $3}')
+		fi
+
+		if [ "$group_lan" == "0" ];then
+			grouped_lan_prefix=$(ifconfig "br-lan" |grep $prefix | awk '/Global/{print $3}')
+		fi
+
+		address=$(echo $grouped_lan_prefix |awk -F \/ '{print $1}')
+		prefixlen=$(echo $grouped_lan_prefix |awk -F \/ '{print $2}')	
+	elif [ "$default_static_prefix" == "1" ];then
+		##	(STATIC	 mode)
+		address=$(uci get default_lan_radvd.basic.address)
+		prefixlen=$(uci get default_lan_radvd.basic.prefixlen)
+		if [ "$prefixlen" == "" ]; then
+			prefixlen=$(ifconfig br-lan | awk '/Global/{print $3}'|awk -F \/ '{print $2}')
+		fi
+		if [ "$prefixlen" == "" ]; then
+			prefixlen=64;
+		fi
+		if [ "$address" == "" ]; then
+			address=$(uci get default_lan_radvd.basic.prefix)
+		fi
+
+	fi
+		
+	## calculate  m_Prefix	and	 m_IP  .
+	masked_prefix=""
+	masked_address=""
+	if [ "" != "$address" -a "" != "$prefixlen" ]; then
+		res=`calc_masked_prefix "$address" "$prefixlen"`
+		masked_prefix=$(echo $res |awk '{print $1}')
+		masked_address=$(echo "$res" |awk '{print $2}')
+	fi
+
+	##	(STATIC	 mode)	Set	 default_lan_radvd	UCI Conf. /	 Set  br-lan  .
+	if [ "$default_static_prefix" == "1" ];then
+		if [ "" != "$address" -a "" != "$prefixlen" ]; then
+			## Set	default_lan_radvd  UCI Conf.
+			uci set default_lan_radvd.basic.prefix=$masked_prefix
+			uci set default_lan_radvd.basic.masked_address=$masked_address
+			uci commit default_lan_radvd
+			sync #This command is for emmc and ext4 filesystem
+			## Set	br-lan	.
+			lan_ip=$masked_address
+			if [ "" != $lan_ip ]; then
+				lan_ip=$lan_ip"/64"
+			fi
+			ifconfig br-lan add "$lan_ip"
+		fi
+	fi
+		
+	## Set	radvd.conf	.
+	prefix_for_clients=$masked_prefix
+	$(ip6tables -F prefix_ce)
+	$(ip6tables -N prefix_ce)
+	$(ip6tables -D FORWARD -p icmpv6 -j prefix_ce ! -s fe80::/10)
+	$(ip6tables -I FORWARD -p icmpv6 -j prefix_ce ! -s fe80::/10)
+	if [ "" != $prefix_for_clients ]; then
+		prefix_for_clients=$prefix_for_clients"/64"
+	else
+		$(ip6tables -p icmpv6 --icmpv6-type echo-request -I prefix_ce -i br-lan -j REJECT --reject-with icmp6-addr-unreachable)
+		printf '\tAdvDefaultLifetime 0;\n'
+		return 0
+	fi
+	prefix=$prefix_for_clients
+	validate_ip6prefix "$prefix" || {prefix=""}
+	printf '\n\tprefix %s\n\t{\n' "$prefix"
+
+	## Count wan ipv6 address lease time.
+	leasetime=0
+		
+	[ -e /tmp/wanip_duetime ] && {
+		duetime=$(cat /tmp/wanip_duetime)
+		curtime=$(echo $(date +%s))
+		leasetime=$(($duetime-$curtime))
+			
+		[ $leasetime -lt 0 ] && {
+			leasetime=0
+		}
+	}
+		
+	## Judge IPv6 mode
+	IsIPv6=$(uci get network.wan.ipv6)
+	Is6RD=$(uci get network.general.wan6rd_enable)
+	Open6RD=0
+	OpenWanDHCPv6=0
+	[ -n "$IsIPv6" -a "$IsIPv6" == "0" ] && {
+		[ -n "$Is6RD" -a "$Is6RD" == "1" ] && {
+			Open6RD=1
+		}
+	} || {
+        OpenWanDHCPv6=1
+	}
+
+	local v6lanstatic=$(uci get network.general.v6lanstatic)
+	local v4wanstatic=$(uci get network.wan.proto)
+	local case6rd=0
+	local caseipv6lan=0
+
+	[ "$Open6RD" == 1 ] && {
+		## Judge 6RD lifetime architecture.
+		  
+		if [ -n "$v6lanstatic" -a "$v6lanstatic" == "1" ]; then {
+			case6rd=1			
+		} elif [ -n "$v4wanstatic" -a "$v4wanstatic" == "static" ]; then {
+			case6rd=2				 
+		} elif [ -e /tmp/wanip_duetime ]; then {
+			case6rd=3
+		} else {
+			case6rd=4
+		} fi
+	}
+		
+	## Lifetimes should be count down or not
+	local countdown=1
+	## In IPv6 6RD tunnel mode, RA prefix lifetimes always set to infinity, 
+	## no matter if LAN port interface be set to "Static IP Address" or 
+	## "Enable_DHCPv6-PD". WenHsien.2016.0106.
+	for name in $RADVD_PREFIX_STRING_OPTIONS; do
+		local get_lifetime=0
+		if [ "$Open6RD" == 1 ]; then {
+			## Judge 6RD lifetime architecture.
+			if [ "$case6rd" == "0" ]; then {
+				get_lifetime=1
+				countdown=1
+			} elif [ "$case6rd" == "1" ]; then {
+				printf '\t\t%s %s;\n' "$name" "infinity"
+				countdown=0
+			} elif [ "$case6rd" == "2" ]; then {
+				printf '\t\t%s %s;\n' "$name" "infinity"
+				countdown=0
+			} elif [ "$case6rd" == "3" ]; then {
+				printf '\t\t%s %s;\n' "$name" $leasetime
+				countdown=1
+			} elif [ "$case6rd" == "4" ]; then {
+				printf '\t\t%s %s;\n' "$name" "infinity"
+				countdown=0
+			} else {
+				printf '\t\t%s %s;\n' "$name" "infinity"
+				countdown=0
+			} fi
+
+			## 6RD do not count down anyway, for now.WenHsien.2016.0113.
+			countdown=0
+		} elif [ -n "$v6lanstatic" -a "$v6lanstatic" == "1" ]; then {
+			printf '\t\t%s %s;\n' "$name" "infinity"
+			countdown=0
+		} else {
+			get_lifetime=1
+			countdown=1
+		} fi
+
+		[ "$get_lifetime" == 1 ] && {
+			if [ "$name" == "AdvPreferredLifetime" ]; then {
+				value=$(ip -6 addr show br-lan |grep $address -A1 |grep lft |awk '{print $4}' |awk -F'sec' '{print $1}')
+			} elif [ "$name" == "AdvValidLifetime" ]; then {
+				value=$(ip -6 addr show br-lan |grep $address -A1 |grep lft |awk '{print $2}' |awk -F'sec' '{print $1}')
+			} fi
+			if [ "$value" == "forever" ]; then 
+				value=4294967295
+			fi
+			printf '\t\t%s %s;\n' "$name" "$value"
+		}
+		done
+
+		## In IPv6 6RD tunnel mode, turn off RA prefix lifetimes count down. WenHsien.2016.0106.
+		for name in $RADVD_PREFIX_BOOLEAN_OPTIONS; do
+		
+			[ "$name" == "DecrementLifetimes" -a "$countdown" == "0" ] && {
+				printf '\t\t%s off;\n' "$name"
+			} || {
+				config_get value "$cfg" "$name"
+				
+				[ -z "$value" ] && continue
+				config_get_bool value "$cfg" "$name" 0
+				
+				if [ "$value" -ne 0 ]; then 
+					printf '\t\t%s on;\n' "$name"
+				else
+					printf '\t\t%s off;\n' "$name"
+				fi
+			}
+		done
+
+		config_get value "$cfg" Base6to4Interface
+		if [ -n "$value" ]; then
+			if ifname=$(get_ifname "$value"); then
+				printf '\t\t%s %s;\n' "Base6to4Interface" "$ifname"
+			fi
+		fi
+
+		config_get value "$cfg" Base6in4Interface
+		if [ -n "$value" ]; then
+			if ifname=$(get_ifname "$value"); then
+				printf '\t\t%s %s;\n' "Base6in4Interface" "$ifname"
+			fi
+		fi
+
+		printf '\t};\n'
+	done
+	## Check if there have any old PD in temporary file.
+	local tmpFile="/tmp/radvd_oldpd"
+	local oldPD=$(cat $tmpFile |head -1)
+	local oldPDwithLen=$oldPD
+
+	validate_ip6addr "$oldPDwithLen" && {
+	if [ "" != $oldPD ]; then
+		oldPDwithLen=$oldPD"/64"
+	fi
+	## Append old PD with Lifetimes to zero, from temporary files, if have any.
+	printf '\n\tprefix %s\n\t{\n' "$oldPDwithLen"
+	printf '\t\t%s %s;\n' "AdvPreferredLifetime" "0"
+	printf '\t\t%s %s;\n' "AdvValidLifetime" "0"
+	printf '\t};\n'
+	} 
+
+	[ "$prefix_count" == 0 ] && {
+		## Set	radvd.conf	.
+		$(ip6tables -F prefix_ce)
+		$(ip6tables -N prefix_ce)
+		$(ip6tables -D FORWARD -p icmpv6 -j prefix_ce ! -s fe80::/10)
+		$(ip6tables -I FORWARD -p icmpv6 -j prefix_ce ! -s fe80::/10)
+		$(ip6tables -p icmpv6 --icmpv6-type echo-request -I prefix_ce -i br-lan -j REJECT --reject-with icmp6-addr-unreachable)
+	}
+
+	return 0
+}
+
+radvd_write_route() {
+	local cfg=$1
+	validate_varname "$cfg" || return 0
+	local ignore
+	local interfaces
+	local interface
+	local prefixes
+	local prefix
+	local name
+	local value
+	local prefixlen
+	local lan_prefix
+
+	config_get_bool ignore "$cfg" ignore 0
+	[ "$ignore" -ne 0 ] && return 0
+
+	config_get interfaces "$cfg" interface
+	exist=0
+	for interface in $interfaces; do
+		[ "$INTERFACE" = "$interface" ] && exist=1
+	done
+	[ "$exist" -eq 0 ] && return 0
+
+	config_get prefixes "$cfg" prefix
+	for prefix in $prefixes; do
+		validate_ip6prefix "$prefix" || continue
+		if [ "$default_static_prefix" == "1" ];then
+				prefixlen=$(uci get default_lan_radvd.basic.prefixlen)
+		fi
+		if [ "$prefixlen" == "" ]; then
+			#prefixlen=$(ifconfig br-lan | awk '/Global/{print $3}'|awk -F \/ '{print $2}')
+			prefixlen=$(uci get radvd.route.prefix |awk -F"/" '{ print $2}')
+		fi
+		if [ "$prefixlen" == "" ]; then
+				prefixlen=64;
+		fi
+		lan_prefix=$(echo `calc_masked_prefix "$prefix" "$prefixlen"`)
+		masked_prefix=$(echo $lan_prefix |awk '{print $1}')
+		masked_address=$(echo "$lan_prefix" |awk '{print $2}')
+		printf '\n\troute %s/%s\n\t{\n' "$masked_prefix" "$prefixlen"
+		for name in $RADVD_ROUTE_STRING_OPTIONS; do
+			config_get value "$cfg" "$name"
+			validate_radvd_string "$value" || continue
+			printf '\t\t%s %s;\n' "$name" "$value"
+		done
+
+		for name in $RADVD_ROUTE_BOOLEAN_OPTIONS; do
+			config_get value "$cfg" "$name"
+			[ -z "$value" ] && continue
+			config_get_bool value "$cfg" "$name" 0
+			if [ "$value" -ne 0 ]; then 
+				printf '\t\t%s on;\n' "$name"
+			else
+				printf '\t\t%s off;\n' "$name"
+			fi
+		done
+
+		printf '\t};\n'
+	done
+
+	[ "$prefix_count" == 0 ] && {
+		## Set	radvd.conf	.
+		$(ip6tables -F prefix_ce)
+		$(ip6tables -N prefix_ce)
+		$(ip6tables -D FORWARD -p icmpv6 -j prefix_ce ! -s fe80::/10)
+		$(ip6tables -I FORWARD -p icmpv6 -j prefix_ce ! -s fe80::/10)
+		$(ip6tables -p icmpv6 --icmpv6-type echo-request -I prefix_ce -i br-lan -j REJECT --reject-with icmp6-addr-unreachable)
+	}
+
+	return 0
+}
+
+radvd_write_rdnss() {
+	local cfg=$1
+	validate_varname "$cfg" || return 0
+	local ignore
+	local interfaces
+	local interface
+	local addrs
+	local addr
+	local addr_list
+	local name
+	local value
+	local i
+
+	config_get_bool ignore "$cfg" ignore 0
+	[ "$ignore" -ne 0 ] && return 0
+
+	config_get interfaces "$cfg" interface
+	exist=0
+	for interface in $interfaces; do
+		[ "$INTERFACE" = "$interface" ] && exist=1
+	done
+	[ "$exist" -eq 0 ] && return 0
+
+	config_get addrs "$cfg" addr
+	i=0
+	for addr in $addrs; do
+		[ "$i" -ge 3 ] && break
+		validate_ip6addr "$addr" || continue
+		addr_list="$addr_list $addr"
+		i=$(($i+1))
+	done
+
+	if [ -z "$addr_list" ]; then
+		addr=$(get_ip6addr "$IFNAME" link) || return 0
+		addr_list=" ${addr%%[/]*}"
+	fi
+
+	printf '\n\tRDNSS%s\n\t{\n' "$addr_list"
+
+	for name in $RADVD_RDNSS_STRING_OPTIONS; do
+		config_get value "$cfg" "$name"
+		validate_radvd_string "$value" || continue
+		printf '\t\t%s %s;\n' "$name" "$value"
+	done
+
+	for name in $RADVD_RDNSS_BOOLEAN_OPTIONS; do
+		config_get value "$cfg" "$name"
+		[ -z "$value" ] && continue
+		config_get_bool value "$cfg" "$name" 0
+		if [ "$value" -ne 0 ]; then 
+			printf '\t\t%s on;\n' "$name"
+		else
+			printf '\t\t%s off;\n' "$name"
+		fi
+	done
+
+	printf '\t};\n'
+
+	return 0
+}
+
+radvd_write_dnssl() {
+	local cfg=$1
+	validate_varname "$cfg" || return 0
+	local suffix_list
+	local suffixes
+	local i
+
+	config_get_bool ignore "$cfg" ignore 0
+	[ "$ignore" -ne 0 ] && return 0
+
+	config_get interfaces "$cfg" interface
+	exist=0
+	for interface in $interfaces; do
+		[ "$INTERFACE" = "$interface" ] && exist=1
+	done
+	[ "$exist" -eq 0 ] && return 0
+
+	config_get suffixes "$cfg" suffix
+	i=0
+	for suffix in $suffixes; do
+		[ "$i" -ge 3 ] && break
+		suffix_list="$suffix_list $suffix"
+		i=$(($i+1))
+	done
+
+
+
+	printf '\n\tDNSSL%s\n\t{\n' "$suffix_list"
+
+	printf '\t};\n'
+
+	return 0
+}
+
+radvd_write_config() {
+	include /lib/network
+
+	RADVD_INTERFACES=
+	config_foreach radvd_add_interface interface
+	config_foreach radvd_add_interface prefix
+	config_foreach radvd_add_interface route
+	config_foreach radvd_add_interface RDNSS
+
+	group_lan=$(uci get dhcp6c.basic.intfGrp_write_prefix)
+	client_interface=$(uci get dhcp6c.basic.interface)
+	vlanIFNAME=$(uci get network.$client_interface.bind_LAN)
+
+	[ -z "$group_lan" ] && group_lan=0
+
+	for INTERFACE in $RADVD_INTERFACES; do	
+		if [ "$group_lan" == "0" ];then
+			IFNAME=$(get_ifname "$INTERFACE") || continue
+			printf 'interface %s\n{\n' "$IFNAME"
+			
+		elif [ "$group_lan" == "1" ];then
+			IFNAME=$(get_ifname "$INTERFACE") || continue
+			printf 'interface %s\n{\n' "$vlanIFNAME"
+		fi
+		config_foreach radvd_write_interface interface
+		config_foreach radvd_write_prefix prefix
+		config_foreach radvd_write_route route
+		config_foreach radvd_write_rdnss rdnss
+		config_foreach radvd_write_dnssl dnssl
+		printf '};\n\n'
+	done
+
+	return 0
+}
+
+radvd_write_config_6rd() {
+	include /lib/network
+
+	RADVD_INTERFACES=
+	config_foreach radvd_add_interface interface
+	config_foreach radvd_add_interface prefix
+	config_foreach radvd_add_interface route
+	config_foreach radvd_add_interface RDNSS
+
+	local enable6rd=$1
+
+	for i in $enable6rd
+	do
+		[ "$i" == "0" ] && i=
+		pd6rd=$(uci get network.wan"$i"6rd.zyPd6rd)		
+
+		local lanIface=
+		lanIface=$(uci get network.wan"$i".bind_LAN)
+		lanIface=$(echo $lanIface | cut -c 4-)	
+		[ -z "$lanIface" ] && lanIface=lan
+		##For radvd setting
+		INTERFACE=lan
+		IFNAME=br-"$lanIface"
+		##write for config
+		printf 'interface %s\n{\n' br-"$lanIface"
+		config_foreach radvd_write_interface interface
+		#radvd_write_interface_tunneling
+		config_foreach radvd_write_prefix prefix
+		config_foreach radvd_write_route route
+		config_foreach radvd_write_rdnss rdnss
+		printf '};\n\n'
+
+		#route6rd=$(cat /tmp/6rd_route)
+		#ip -6 route change via $route6rd
+
+	done
+
+	return 0
+}
+
+radvd_write_config_6to4() {
+	include /lib/network
+
+	RADVD_INTERFACES=
+	config_foreach radvd_add_interface interface
+	config_foreach radvd_add_interface prefix
+	config_foreach radvd_add_interface route
+	config_foreach radvd_add_interface RDNSS
+
+	local enable6to4=$1
+
+	for i in $enable6to4
+	do
+		[ "$i" == "0" ] && i=
+		local lanIface=
+		lanIface=$(uci get network.wan"$i".bind_LAN)
+		lanIface=$(echo $lanIface | cut -c 4-)	
+		[ -z "$lanIface" ] && lanIface=lan
+		##For radvd setting
+		INTERFACE=lan
+		IFNAME=br-"$lanIface"
+		##write for config
+		printf 'interface %s\n{\n' br-"$lanIface"
+		config_foreach radvd_write_interface interface
+		#radvd_write_interface_tunneling
+		config_foreach radvd_write_prefix prefix
+		config_foreach radvd_write_route route
+		config_foreach radvd_write_rdnss rdnss
+		printf '};\n\n'
+
+		#route6to4=$(cat /tmp/6to4_route)
+		#ip -6 route change via $route6to4
+	done
+
+	return 0
+}
+
+radvd_write_config_6in4() {
+	include /lib/network
+
+	RADVD_INTERFACES=
+	config_foreach radvd_add_interface interface
+	config_foreach radvd_add_interface prefix
+	config_foreach radvd_add_interface route
+	config_foreach radvd_add_interface RDNSS
+
+	local enable6in4=$1
+
+	for i in $enable6in4
+	do
+		[ "$i" == "0" ] && i=
+		local lanIface=
+		lanIface=$(uci get network.wan"$i".bind_LAN)
+		lanIface=$(echo $lanIface | cut -c 4-)	
+		[ -z "$lanIface" ] && lanIface=lan
+		##For radvd setting
+		INTERFACE=lan
+		IFNAME=br-"$lanIface"
+		##write for config
+		printf 'interface %s\n{\n' br-"$lanIface"
+		config_foreach radvd_write_interface interface
+		#radvd_write_interface_tunneling
+		config_foreach radvd_write_prefix prefix
+		config_foreach radvd_write_route route
+		config_foreach radvd_write_rdnss rdnss
+		printf '};\n\n'
+
+		#ip -6 route del default 
+	done
+
+	return 0
+}
+
+copy_dnsv6_uci_config_from_network_to_radvd() {
+	# Write	 IPv6 Tunnel DNS  into	RDNSS address list	.
+	local ck6rd=$(uci get network.general.wan6rd_enable)
+	local ck6to4=$(uci get network.general.wan6to4_enable)
+	local ck6in4=$(uci get network.general.wan6in4_enable)
+
+	if [ -n "$ck6rd" -a "$ck6rd" == "1" ]; then
+		domain_name_server1=$(uci get network.wan6rd.PriDns)
+		domain_name_server2=$(uci get network.wan6rd.SecDns)
+		domain_name_server3=$(uci get network.wan6rd.ThiDns)
+	elif [ -n "$ck6to4" -a "$ck6to4" == "1" ]; then
+		domain_name_server1=$(uci get network.wan6to4.PriDns)
+		domain_name_server2=$(uci get network.wan6to4.SecDns)
+		domain_name_server3=$(uci get network.wan6to4.ThiDns)
+	elif [ -n "$ck6in4" -a "$ck6in4" == "1" ]; then
+		domain_name_server1=$(uci get network.wan6in4.PriDns)
+		domain_name_server2=$(uci get network.wan6in4.SecDns)
+		domain_name_server3=$(uci get network.wan6in4.ThiDns)
+	# else
+		## DNSv6 in dhcp6s.conf has out of date, should not be used by default.
+		# domain_name_server1=$(uci get dhcp6s.basic.domain_name_server1)
+		# domain_name_server2=$(uci get dhcp6s.basic.domain_name_server2)
+		# domain_name_server3=$(uci get dhcp6s.basic.domain_name_server3)
+	fi
+		if [ $ck6rd == "1" ] || [ $ck6to4 == "1" ] || [ $ck6in4 == "1" ]; then
+		domain_name_server1="${domain_name_server1%%/*}"
+		domain_name_server2="${domain_name_server2%%/*}"
+		domain_name_server3="${domain_name_server3%%/*}"
+
+		uci delete radvd.rdnss.addr
+		[ -n "$domain_name_server1" ] && uci add_list radvd.rdnss.addr=$domain_name_server1
+		[ -n "$domain_name_server2" ] && uci add_list radvd.rdnss.addr=$domain_name_server2
+		[ -n "$domain_name_server3" ] && uci add_list radvd.rdnss.addr=$domain_name_server3
+		uci commit radvd
+	fi
+	sync #This command is for emmc and ext4 filesystem
+}
+
+## YO  2015-05-21  Set radvd uci config for route info in RA packet (LAN side)
+radvd_set_uci_config_for_route_info() {
+	local lan_prefix=`ip -6 addr show br-lan | grep "scope global" | awk {'print $2'}`
+
+	[ -z "$lan_prefix" ] && return 0
+	local route_life_time=`ip -6 addr show br-lan | grep "scope global" -A 1 | grep "valid_lft " | awk {'print $2'} | awk -F "sec" '{print $1}'`
+#	uci set radvd.route.prefix="$lan_prefix"
+
+	[ "$route_life_time" == "forever" ] && route_life_time="infinity"
+	uci set radvd.route.AdvRouteLifetime="$route_life_time"
+	uci commit radvd
+
+	return 0
+}
+
+start() {
+	IsIPv6=$(uci get network.wan.ipv6)
+	Is6RD=$(uci get network.general.wan6rd_enable)
+	Is6to4Enable=$(uci get network.general.wan6to4_enable)
+	Is6in4Enable=$(uci get network.general.wan6in4_enable)
+	reloadCg=$1
+	[ "$IsIPv6" != "1" -a "$Is6RD" != "1" -a "$Is6to4Enable" != "1" -a "$Is6in4Enable" != "1" ] && {
+		return 0
+	}
+	copy_dnsv6_uci_config_from_network_to_radvd
+
+	## WenHsien 2015.1124: Combine LAN IPs and set Lifetimes if it is IPv6 Enable and PD Enable. Backup that in configuration.lua
+	dhcpv6PDEnable=$(uci get network.general.dhcpv6pd)
+	[ "$dhcpv6PDEnable" == "1" ] && {
+		cat /tmp/lanip |xargs -n 1 ifconfig br-lan add
+		
+		ip1=$(cat /tmp/lanip |awk NR==1)
+		ip2=$(cat /tmp/lanip |awk NR==2)
+		ip3=$(cat /tmp/lanip |awk NR==3)
+		
+		plt1=$(cat /tmp/lanipplt |awk NR==1)
+		vlt1=$(cat /tmp/lanipvlt |awk NR==1)
+		ip -6 addr change $ip1 dev br-lan preferred_lft $plt1 valid_lft $vlt1
+		
+		plt2=$(cat /tmp/lanipplt |awk NR==2)
+		vlt2=$(cat /tmp/lanipvlt |awk NR==2)
+		ip -6 addr change $ip2 dev br-lan preferred_lft $plt2 valid_lft $vlt2
+		
+		plt3=$(cat /tmp/lanipplt |awk NR==3)
+		vlt3=$(cat /tmp/lanipvlt |awk NR==3)
+		ip -6 addr change $ip3 dev br-lan preferred_lft $plt3 valid_lft $vlt3
+		
+		rm /tmp/lanip /tmp/lanipplt /tmp/lanipvlt
+	}
+
+	## YO @start  2015-05-21  Set radvd uci config for route info in RA packet (LAN side)
+	radvd_set_uci_config_for_route_info
+	## @end
+
+	config_load radvd
+	
+	RADVD_CONFIG_FILE=
+	config_foreach radvd_find_config_file radvd
+
+	##for check 6RD 
+	local num6rd=
+	local ck6rdcall=$(cat /tmp/radvd_6rd)
+	for i in "" 1 2 3 4
+	do
+		ck6rd_enable=$(uci get network.general.wan"$i"6rd_enable)
+		[ "$ck6rd_enable" == "1" ] && {
+			[ -z "$i" ] && append num6rd 0 || append num6rd "$i"
+		}
+	done
+
+	##for check 6to4
+	local num6to4=
+	local ck6to4call=$(cat /tmp/radvd_6to4)
+	for i in "" 1 2 3 4
+	do
+		ck6to4_enable=$(uci get network.general.wan"$i"6to4_enable)
+		[ "$ck6to4_enable" == "1" ] && {
+			[ -z "$i" ] && append num6to4 0 || append num6to4 "$i"
+		}
+	done
+
+	##for check 6in4
+	local num6in4=
+	local ck6in4call=$(cat /tmp/radvd_6in4)
+	for i in "" 1 2 3 4
+	do
+		ck6in4_enable=$(uci get network.general.wan"$i"6in4_enable)
+		[ "$ck6in4_enable" == "1" ] && {
+			[ -z "$i" ] && append num6in4 0 || append num6in4 "$i"
+		}
+	done
+	
+	##ULA
+	ULA_enable=$(uci get network.general.ULA)
+	ipv6_address=$(ifconfig br-lan | grep "Scope:Link"| awk -F ' ' '{ print $3}')
+	IPv6_MAC=$(expand_ipv6 $ipv6_address | awk -F':' '{print $5":"$6":"$7":"$8}')
+	ULA_IP=fd00::$IPv6_MAC
+	[ "$ULA_enable" == "1" ] && {
+		ifconfig br-lan add $ULA_IP	
+	}
+		
+#	mkdir -p /var/lock
+#	lock /var/lock/radvd.lck
+	if [ -z "$RADVD_CONFIG_FILE" ]; then
+		mkdir -p /var/etc/
+			
+		if [ "$IsIPv6" == "1" ];then
+			radvd_write_config > /var/etc/radvd.conf
+			if [ -s "/var/etc/radvd.conf" ]; then
+				RADVD_CONFIG_FILE=/var/etc/radvd.conf
+			fi
+		elif [ -n "$num6rd" -o "$ck6rdcall" == "1" ];then
+			radvd_write_config_6rd "$num6rd" > /var/etc/radvd_6rd.conf
+			if [ -s "/var/etc/radvd_6rd.conf" ]; then
+				RADVD_CONFIG_FILE=/var/etc/radvd_6rd.conf
+			fi
+			echo 0 > /tmp/radvd_6rd
+		elif [ -n "$num6to4" -o "$ck6to4call" == "1" ];then
+			radvd_write_config_6to4 "$num6to4" > /var/etc/radvd_6to4.conf
+			if [ -s "/var/etc/radvd_6to4.conf" ]; then
+				RADVD_CONFIG_FILE=/var/etc/radvd_6to4.conf
+			fi
+			echo 0 > /tmp/radvd_6to4
+		elif [ -n "$num6in4" -o "$ck6in4call" == "1" ];then
+			radvd_write_config_6in4 "$num6in4" > /var/etc/radvd_6in4.conf
+			if [ -s "/var/etc/radvd_6in4.conf" ]; then
+				RADVD_CONFIG_FILE=/var/etc/radvd_6in4.conf
+			fi
+			echo 0 > /tmp/radvd_6in4
+		else
+			radvd_write_config > /var/etc/radvd.conf
+			if [ -s "/var/etc/radvd.conf" ]; then
+				RADVD_CONFIG_FILE=/var/etc/radvd.conf
+			fi
+		fi
+	fi
+#	lock -u /var/lock/radvd.lck
+	[ -z "$RADVD_CONFIG_FILE" ] && {
+		return 1
+	}
+
+	client_interface=$(uci get dhcp6c.basic.interface)
+		vlanIFNAME=$(uci get network.$client_interface.bind_LAN)
+
+	##stop old radvd here to protect trigger new radvd if it fail.
+	[ "$RADVD_CONFIG_FILE" == "/var/etc/radvd_6rd.conf" ] && {
+		local pid6rd=$(ps |grep radvd_6rd.conf | grep "grep" -v |awk '{print $1}')
+		kill -9 $pid6rd	
+	} || {		
+		[ -f /var/run/radvd-$vlanIFNAME.pid -a "$reloadCg" != "config" ] && kill -9 $(cat /var/run/radvd-$vlanIFNAME.pid)
+	}
+
+	## Cancel sysctl. It may cause default router be canceled, and kernel 3.3.8 
+	##	 could set "forwarding" to "2" while boot.WenHsien.20140730.
+	#sysctl -w net.ipv6.conf.all.forwarding=1 > /dev/null 2> /dev/null
+
+	## WenHsien: for CE Router Logo, CHT-TL Test Case Forward7084-16 (v1.1.0) and Lan7084-6.2015.1002.
+	LanPrefix=$(ifconfig br-lan |grep inet6 |grep Global |awk '{print$3}' |awk -F"\/" '{print$1}')
+	$(ip6tables -F input_ce)
+	$(ip6tables -N input_ce)
+	$(ip6tables -D INPUT -p icmpv6 --icmpv6-type neighbor-advertisement -j input_ce ! -s fe80::/10)
+	$(ip6tables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu)
+	$(ip6tables -I INPUT -p icmpv6 --icmpv6-type neighbor-advertisement -j input_ce ! -s fe80::/10)
+	$(ip6tables -I input_ce -i br-lan ! -s $LanPrefix/64 -j REJECT --reject-with icmp6-addr-unreachable)
+	$(ip6tables -F forward_ce)
+	$(ip6tables -N forward_ce)
+	$(ip6tables -D FORWARD -p icmpv6 -j forward_ce ! -s fe80::/10)
+	$(ip6tables -I FORWARD -p icmpv6 -j forward_ce ! -s fe80::/10)
+	$(ip6tables -I forward_ce ! -i br-lan ! -d $LanPrefix/64 -j REJECT --reject-with icmp6-addr-unreachable)
+	$(ip6tables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu)
+
+	local debug
+	local debug_option
+	config_get_bool debug basic debug 0
+	[ $debug -eq 1 ] && debug_option="-d 5"
+	## Avoid radvd.bin be run twice while boot.WenHsien.20140825.
+	#radvd -C "$RADVD_CONFIG_FILE$bind_lan" -m stderr_syslog -p /var/run/radvd.pid
+	isrun=$(ps |grep "radvd -C" |grep -v grep)
+	if [ -z "$isrun" ]; then
+		radvd -C "$RADVD_CONFIG_FILE" $debug_option -m stderr_syslog -p /var/run/radvd.pid &
+	else
+		## if the daemon is alive, only reload the config.
+		pkill -HUP radvd
+	fi
+
+	cp /var/run/radvd.pid /var/run/radvd-$vlanIFNAME.pid
+
+	# Set UCI radvd
+	uci set radvd.@prefix[0].prefix=""
+	uci commit radvd 
+	sync #This command is for emmc and ext4 filesystem
+
+	local is6srun=$(ps -ww |grep "/usr/sbin/dhcp6s -c" |grep -v grep)
+	/etc/init.d/dhcp6s restart
+	# [ -n "$is6srun" ] && {
+	#	/etc/init.d/dhcp6s reload config
+	#} || {
+	#	/etc/init.d/dhcp6s restart
+	#}
+}
+
+stop() {
+	#[ -f /var/run/radvd-$vlanIFNAME.pid ] && kill -9 $(cat /var/run/radvd-$vlanIFNAME.pid) 
+	killall radvd
+	return 1
+}
+
+reload() {
+	if [ "$1" == "config" ]; then
+		start $1
+	else
+		restart
+	fi
+}

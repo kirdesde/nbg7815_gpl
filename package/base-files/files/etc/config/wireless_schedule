@@ -1,0 +1,24 @@
+config general 'schedule'
+	option enabled 'disable'
+
+config day 'sun'
+	option times 'f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,'
+
+config day 'mon'
+	option times 'f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,'
+
+config day 'tue'
+	option times 'f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,'
+
+config day 'wed'
+	option times 'f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,'
+
+config day 'thu'
+	option times 'f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,'
+
+config day 'fri'
+	option times 'f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,'
+
+config day 'sat'
+	option times 'f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,'
+

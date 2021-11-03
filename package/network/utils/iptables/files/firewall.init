@@ -1,0 +1,72 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2008-2010 OpenWrt.org
+
+START=45
+
+reorganize_firewallrule() {
+	##For app-agent delete blocking rule  
+	count=$(uci get firewall.general.rules_count)
+	local now=$(date +%s)
+	i=1
+	while [ $i -le "$count" ]
+	do
+		local stoptimestamp=$(uci get firewall.rule$i.timestamp)
+		local state=$(uci get firewall.rule$i.state)
+		if [ -n "$stoptimestamp" ] && [ "$stoptimestamp" != 0 ] && [ "$now" -ge "$stoptimestamp" ]; then #expire
+			if [ "$state" = "Block" ]; then
+				uci set firewall.rule$i.delete=1
+			elif [ "$state" = "Allow" ]; then
+				uci set firewall.rule$i.state="Block"
+				uci set firewall.rule$i.timestamp="0"
+			fi
+			uci commit firewall
+		fi
+
+		delete=$(uci get firewall.rule$i.delete)
+		if [ "$delete" = "1" ]; then
+			##delet rule
+			ruleid=$i
+			uci del firewall.rule$ruleid			
+			while [ $ruleid -lt "$count" ]
+			do
+				#move rule
+				uci rename firewall.rule$((ruleid + 1))=rule$ruleid
+				uci set firewall.rule$ruleid.CurPos=$ruleid
+				uci set firewall.rule$ruleid.service=service$ruleid
+				ruleid=$((ruleid + 1))
+			done
+			count=$((count - 1))
+			ruleid=$((ruleid - 1))
+			uci set firewall.general.rules_count=$count
+			uci set firewall.general.NextRulePos=$((count + 1))
+			uci commit firewall
+
+			i=1
+		else
+			i=$((i + 1))
+		fi
+
+		#i=`expr $i + 1`
+	done
+}
+
+
+boot() {
+	/sbin/firewall boot
+	reload
+}
+
+start() {
+	### applying after WAN connection up ###
+	exit 0
+}
+
+stop() {
+	/sbin/firewall stop
+}
+
+reload() {
+	reorganize_firewallrule
+	/sbin/firewall reload
+}
+

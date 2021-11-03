@@ -1,0 +1,156 @@
+#!/bin/sh
+
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/lib
+export PATH
+
+. /etc/functions.sh
+include /lib/config
+
+###############Switch################
+#            LAN*4  LAN10G  WAN2.5G 
+# portnum    5432   1       0 
+# physical   1234   6       5
+
+portnum=$1
+
+if [ "$portnum" == "a" ]; then
+	port=0
+	while [ "$port" -le "5" ]
+	do
+		sh /bin/portspeed $port
+		port=$(($port+1))
+	done
+else
+	##wan 2.5G
+	if [ "$portnum" == "0" ]; then 
+		up_5=$(swconfig dev switch0 port 5 get link | grep 'up')
+		if [ "$up_5" != "" ]; then
+			speed_5=$(swconfig dev switch0 port 5 get link | grep 'up' | sed 's/^.*speed://g' | sed 's/baseT.*$//g')
+			if [ "$speed_5" == "10" ]; then
+				echo "Port $portnum: 10M" 
+				return 0
+			elif [ "$speed_5" == "100" ]; then
+				echo "Port $portnum: 100M" 
+				return 0
+			elif [ "$speed_5" == "1000" ]; then
+				echo "Port $portnum: 1000M" 
+				return 0	
+			elif [ "$speed_5" == "2500" ]; then
+				echo "Port $portnum: 2.5G" 
+				return 0		
+			fi
+		else
+			echo "Port $portnum: off-link"
+			exit 1
+		fi
+	fi
+	#LAN 10G
+	if [ "$portnum" == "1" ]; then 
+		up_4=$(swconfig dev switch0 port 6 get link | grep 'up')
+		if [ "$up_4" != "" ]; then
+			speed_4=$(swconfig dev switch0 port 6 get link | grep 'up' | sed 's/^.*speed://g' | sed 's/baseT.*$//g')
+			if [ "$speed_4" == "10" ]; then
+				echo "Port $portnum: 10M" 
+				return 0
+			elif [ "$speed_4" == "100" ]; then
+				echo "Port $portnum: 100M" 
+				return 0
+			elif [ "$speed_4" == "1000" ]; then
+				echo "Port $portnum: 1000M" 
+				return 0	
+			elif [ "$speed_4" == "2500" ]; then
+				echo "Port $portnum: 2.5G" 
+				return 0	
+			elif [ "$speed_4" == "10000" ]; then
+				echo "Port $portnum: 10G" 
+				return 0							
+			fi
+		else
+		    echo "Port $portnum: off-link"
+            exit 1
+		fi
+	fi
+	#LAN 1G
+	if [ "$portnum" == "2" ]; then 
+		up_3=$(swconfig dev switch0 port 4 get link | grep 'up')
+		if [ "$up_3" != "" ]; then
+			speed_3=$(swconfig dev switch0 port 4 get link | grep 'up' | sed 's/^.*speed://g' | sed 's/baseT.*$//g')
+			if [ "$speed_3" == "10" ]; then
+				echo "Port $portnum: 10M" 
+				return 0
+			elif [ "$speed_3" == "100" ]; then
+				echo "Port $portnum: 100M" 
+				return 0
+			else
+				echo "Port $portnum: 1000M" 
+				return 0	
+			fi
+		else
+		    echo "Port $portnum: off-link"
+            exit 1
+		fi
+	fi
+	#LAN 1G
+	if [ "$portnum" == "3" ]; then 
+		up_2=$(swconfig dev switch0 port 3 get link | grep 'up')
+		if [ "$up_2" != "" ]; then
+			speed_2=$(swconfig dev switch0 port 3 get link | grep 'up' | sed 's/^.*speed://g' | sed 's/baseT.*$//g')
+			if [ "$speed_2" == "10" ]; then
+				echo "Port $portnum: 10M" 
+				return 0
+			elif [ "$speed_2" == "100" ]; then
+				echo "Port $portnum: 100M" 
+				return 0
+			else
+				echo "Port $portnum: 1000M" 
+				return 0	
+			fi
+		else
+		    echo "Port $portnum: off-link"
+            exit 1
+		fi
+	fi
+
+	#LAN 1G
+	if [ "$portnum" == "4" ]; then 
+		up_2=$(swconfig dev switch0 port 2 get link | grep 'up')
+		if [ "$up_2" != "" ]; then
+			speed_2=$(swconfig dev switch0 port 2 get link | grep 'up' | sed 's/^.*speed://g' | sed 's/baseT.*$//g')
+			if [ "$speed_2" == "10" ]; then
+				echo "Port $portnum: 10M" 
+				return 0
+			elif [ "$speed_2" == "100" ]; then
+				echo "Port $portnum: 100M" 
+				return 0
+			else
+				echo "Port $portnum: 1000M" 
+				return 0	
+			fi
+		else
+		    echo "Port $portnum: off-link"
+            exit 1
+		fi
+	fi
+
+	#LAN 1G
+	if [ "$portnum" == "5" ]; then 
+		up_2=$(swconfig dev switch0 port 1 get link | grep 'up')
+		if [ "$up_2" != "" ]; then
+			speed_2=$(swconfig dev switch0 port 1 get link | grep 'up' | sed 's/^.*speed://g' | sed 's/baseT.*$//g')
+			if [ "$speed_2" == "10" ]; then
+				echo "Port $portnum: 10M" 
+				return 0
+			elif [ "$speed_2" == "100" ]; then
+				echo "Port $portnum: 100M" 
+				return 0
+			else
+				echo "Port $portnum: 1000M" 
+				return 0	
+			fi
+		else
+		    echo "Port $portnum: off-link"
+            exit 1
+		fi
+	fi
+   
+fi

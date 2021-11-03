@@ -1,0 +1,29 @@
+menu "Zyxel configuration"
+
+config ZYXEL
+	bool "Zyxel products"
+	default n
+
+config ZYXEL_ETHADDR
+	bool "use ethaddr variable not from ART"
+	depends on ZYXEL
+	default n
+	help
+	  Use ethaddr environment not from ART if it is available.
+
+config ZYXEL_LED
+	bool "zyxel LED support"
+	depends on ZYXEL
+	default n
+
+config ZYXEL_LED_LP5562
+	bool "LP5562 driver"
+	depends on ZYXEL_LED
+	default n
+
+config ZYXEL_LED_LP5569
+	bool "LP5569 twin drivers"
+	depends on ZYXEL_LED
+	default n
+
+endmenu

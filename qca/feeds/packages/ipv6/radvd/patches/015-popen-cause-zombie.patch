@@ -1,0 +1,138 @@
+--- a/send.c	2016-07-05 19:38:57.552005000 +0800
++++ b/send.c	2016-07-05 19:47:58.955998397 +0800
+@@ -120,7 +120,7 @@
+ 	FILE* fp= NULL;
+ 	if((fp= popen(cmd, "r"))==NULL)
+ 		return 1;
+-	if(fgets(cmd, 1024, fp)==NULL)
++	if(fgets(cmd, 512, fp)==NULL)
+ 		return 1;
+ 	if( strlen(cmd)>0 && cmd[strlen(cmd)-1]==10 )
+ 		cmd[strlen(cmd)-1]= 0;
+@@ -128,35 +128,60 @@
+ 	return 0;
+ }
+ 
++//use fopen to get system call output
++int DoGetFile(char* cmd)
++{
++	FILE* fp= NULL;
++	if((fp= fopen(cmd, "r"))==NULL)
++		return 1;
++	if(fgets(cmd, 512, fp)==NULL)
++		return 1;
++	if( strlen(cmd)>0 && cmd[strlen(cmd)-1]==10 )
++		cmd[strlen(cmd)-1]= 0;
++	fclose(fp);
++	return 0;
++}
++
+ //2016/02/02, new version check_wan_ip_empty()
+ int check_wan_ip_empty()
+ {
+-	char cmd[1024]={};
++	char cmd[512]={};
+ 	int m_6RDEnable= 0;
+ 	int m_6to4Enable= 0;
+ 	int m_6in4Enable= 0;
+ 	int m_ULAEnable= 0;
+ 	char m_ifname[128]={};
++	char ckWANv6Status[]="/tmp/ckWANv6Status";
+ 	
+ 	//check if 6rd is enabled.
+-	strcpy(cmd, "uci get network.general.wan6rd_enable");
+-	DoDoCommand(cmd);
+-	m_6RDEnable= atoi(cmd);
++	snprintf(cmd, sizeof(cmd), "uci get network.general.wan6rd_enable > %s", ckWANv6Status);
++	system(cmd);
++	strcpy(cmd, ckWANv6Status);
++	if (DoGetFile(cmd) == 0)
++		m_6RDEnable= atoi(cmd);
+ 	
+ 	//check if 6to4 is enabled.
+-	strcpy(cmd, "uci get network.general.wan6to4_enable");
+-	DoDoCommand(cmd);
+-	m_6to4Enable= atoi(cmd);
++	snprintf(cmd, sizeof(cmd), "uci get network.general.wan6to4_enable > %s", ckWANv6Status);
++	system(cmd);
++	strcpy(cmd, ckWANv6Status);
++	if (DoGetFile(cmd) == 0)
++		m_6to4Enable= atoi(cmd);
+ 	
+ 	//check if 6in4 is enabled.
+-	strcpy(cmd, "uci get network.general.wan6in4_enable");
+-	DoDoCommand(cmd);
+-	m_6in4Enable= atoi(cmd);
+-	
++	snprintf(cmd, sizeof(cmd), "uci get network.general.wan6in4_enable > %s", ckWANv6Status);
++	system(cmd);
++	strcpy(cmd, ckWANv6Status);
++	if (DoGetFile(cmd) == 0)
++		m_6in4Enable= atoi(cmd);
++
++#if 0
+ 	//check if ULA is enabled.
+-	strcpy(cmd, "uci get network.general.ULA");
+-	DoDoCommand(cmd);
+-	m_ULAEnable= atoi(cmd);
++	snprintf(cmd, sizeof(cmd), "uci get network.general.ULA  > %s", ckWANv6Status);
++	system(cmd);
++	strcpy(cmd, ckWANv6Status);
++	if (DoGetFile(ckWANv6Status))
++		m_ULAEnable= atoi(cmd);
++#endif
+ 
+ 	//check interface name is up
+ 	if( (m_6RDEnable==1 && !check_tunnel_interface("6rd-wan6rd")) ||
+@@ -176,28 +201,35 @@
+ 		strcpy(m_ifname, "6in4-wan6in4");
+ 	else //not tunneling mode
+ 	{
+-		strcpy(cmd, "uci get dhcp6c.basic.ifname"); //this line is danger, who decide value of dhcp6c.basic.ifname?
+-		DoDoCommand(cmd);
+-		strcpy(m_ifname, cmd);
++		snprintf(cmd, sizeof(cmd), "uci get dhcp6c.basic.ifname > %s", ckWANv6Status);//this line is danger, who decide value of dhcp6c.basic.ifname?
++		system(cmd);
++		strcpy(cmd, ckWANv6Status);
++		if (DoGetFile(cmd) == 0)
++			strcpy(m_ifname, cmd);
+ 	}
+ 	//check does wan interface have global IPv6 address
+-	snprintf(cmd, sizeof(cmd), "ifconfig %s | grep Global | awk '{print $3}'", m_ifname);
+-	DoDoCommand(cmd);
+-	if(strstr(cmd, ":")==NULL)
+-	{
+-		syslog(LOG_DEBUG, "%s(%d): interface:%s does not have IPv6 address, return 1", __func__, __LINE__, m_ifname);
+-		return 1;
++	snprintf(cmd, sizeof(cmd), "ifconfig %s | grep Global | awk '{print $3}' > %s", m_ifname, ckWANv6Status);
++	system(cmd);
++	strcpy(cmd, ckWANv6Status);
++	if (DoGetFile(cmd) == 0){
++		if(strstr(cmd, ":")==NULL)
++		{
++			syslog(LOG_DEBUG, "%s(%d): interface:%s does not have IPv6 address, return 1", __func__, __LINE__, m_ifname);
++			return 1;
++		}
+ 	}
+ 	//syslog(LOG_DEBUG, "%s(%d): m_6RDEnable:%d, m_6to4Enable:%d, m_6in4Enable:%d, m_ULAEnable:%d, m_ifname:%s", __func__, __LINE__, m_6RDEnable, m_6to4Enable, m_6in4Enable, m_ULAEnable, m_ifname);
+-	
+ 	//check wan link status(1: down, 0:up)
+ 	int wan_likn_status= 0;
+-	strcpy(cmd, "/sbin/swconfig dev eth0 port 5 get link | grep down -c");
+-	DoDoCommand(cmd);
+-	if(atoi(cmd)==1)
+-	{
+-		syslog(LOG_DEBUG, "%s(%d): wan cable is down, return 1", __func__, __LINE__);
+-		return 1;
++	snprintf(cmd, sizeof(cmd), "/sbin/swconfig dev eth0 port 5 get link | grep down -c > %s", ckWANv6Status);
++	system(cmd);
++	strcpy(cmd, ckWANv6Status);
++	if (DoGetFile(cmd) == 0){
++		if(atoi(cmd)==1)
++		{
++			syslog(LOG_DEBUG, "%s(%d): wan cable is down, return 1", __func__, __LINE__);
++			return 1;
++		}
+ 	}
+ 
+ 	//Kerker add 2016/01/13

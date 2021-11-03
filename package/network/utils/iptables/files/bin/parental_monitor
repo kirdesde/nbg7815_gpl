@@ -1,0 +1,290 @@
+#!/bin/sh
+
+. /etc/functions.sh
+include /lib/config
+
+usage() {
+	echo $0 "<command>"
+	exit 0
+}
+
+
+reload_parentalMonitor(){
+
+	killall -9 crond
+
+        if [ -f /etc/crontabs/root ]; then
+                sed -i -e '/sendto.sh/d' /etc/crontabs/root
+                sed -i -e '/resume.sh/d' /etc/crontabs/root
+        fi	
+
+	config_load parental_monitor
+	config_get rule_num general count
+	config_get parental_enable general enable
+		
+	##Parental Monitor 
+	if [ $parental_enable = "1" ]; then    
+		i=1
+		while [ "$i" -le "$rule_num" ]
+		do
+			config_get rule_enable rule$i enable
+			if [ "$rule_enable" == "1" ]; then 
+				config_get start_hour rule$i start_hour
+				config_get start_min rule$i start_min
+				config_get stop_hour rule$i stop_hour
+				config_get stop_min rule$i stop_min
+				config_get weekdays rule$i weekdays
+				config_get mac_list rule$i mac_list
+				
+			    dst_enable=$(ck_daylight_saving)     # steven , 2015.0202 
+			    if [ "$dst_enable" = "1" ]; then  #in dst
+						start_hour=$(expr $start_hour - 1 )
+						stop_hour=$(expr $stop_hour - 1 )
+						
+						if [ $start_hour != $stop_hour ] || [ $start_min != $stop_min ]; then 
+						if [ "$start_hour" -lt 0 ] || [ "$stop_hour" -lt 0 ]; then
+							week_day_modified="1"
+						else
+							week_day_modified="0"
+						fi
+						
+						if [ $week_day_modified == "0" ]; then		
+							if [ "$start_min" == "30" ]; then
+								echo "30-59/6 $start_hour * * $weekdays /sbin/sendto.sh $i" >> /etc/crontabs/root
+								start_hour=$(expr $start_hour + 1 )
+							fi
+							if [ "$stop_min" == "30" ]; then
+								echo "0-30/6 $stop_hour * * $weekdays /sbin/sendto.sh $i" >> /etc/crontabs/root
+								stop_hour=$(expr $stop_hour - 1 )
+							fi
+							if [ $start_hour != $stop_hour ]; then
+								echo "0-59/6 $start_hour-$stop_hour * * $weekdays /sbin/sendto.sh $i" >> /etc/crontabs/root
+							fi
+							if [ "$stop_min" == "00" ]; then
+								stop_hour=$(expr $stop_hour + 1 )
+								if [ "$stop_hour" -gt 24 ]; then
+									stop_hour=0
+								fi	
+								echo "2 $stop_hour * * $weekdays /sbin/resume.sh $i" >> /etc/crontabs/root
+							fi
+							if [ "$stop_min" == "30" ]; then
+								stop_hour=$(expr $stop_hour + 1 ) 
+								if [ "$stop_hour" -gt 24 ]; then
+									stop_hour=0
+								fi	
+								echo "32 $stop_hour * * $weekdays /sbin/resume.sh $i" >> /etc/crontabs/root
+							fi
+						else  #week_day_modified=1					
+							
+							Mon="$(echo "$weekdays" | grep "Mon")"
+							Tue="$(echo "$weekdays" | grep "Tue")"
+							Wed="$(echo "$weekdays" | grep "Wed")"
+							Thu="$(echo "$weekdays" | grep "Thu")"
+							Fri="$(echo "$weekdays" | grep "Fri")"
+							Sat="$(echo "$weekdays" | grep "Sat")"
+							Sun="$(echo "$weekdays" | grep "Sun")"
+							week_dayless=" "
+							week_dayplus=" " 
+							
+							if [ ${Tue} != " " ]; then
+							     week_dayless=${week_dayless}Mon,
+							fi
+							if [ ${Wed} != " " ]; then
+							     week_dayless=${week_dayless}Tue,							           
+							fi
+							if [ ${Thu} != " " ]; then
+							     week_dayless=${week_dayless}Wed,							          
+							fi
+							if [ ${Fri} != " " ]; then
+							     week_dayless=${week_dayless}Thu,		           
+							fi
+							if [ ${Sat} != " " ]; then
+							     week_dayless=${week_dayless}Fri,							           
+							fi
+							if [ ${Sun} != " " ]; then
+							     week_dayless=${week_dayless}Sat,							          
+							fi
+							if [ ${Mon} != " " ]; then
+							     week_dayless=${week_dayless}Sun							          
+							fi
+							week_dayless="$(echo "$week_dayless" | sed 's/\,$/\n/g')"
+							
+								if [ ${Sun} != " " ]; then
+							     week_dayplus=${week_dayplus}Mon,
+							fi
+							if [ ${Mon} != " " ]; then
+							     week_dayplus=${week_dayplus}Tue,							           
+							fi
+							if [ ${Tue} != " " ]; then
+							     week_dayplus=${week_dayplus}Wed,							          
+							fi
+							if [ ${Wed} != " " ]; then
+							     week_dayplus=${week_dayplus}Thu,		           
+							fi
+							if [ ${Thu} != " " ]; then
+							     week_dayplus=${week_dayplus}Fri,							           
+							fi
+							if [ ${Fri} != " " ]; then
+							     week_dayplus=${week_dayplus}Sat,							          
+							fi
+							if [ ${Sat} != " " ]; then
+							     week_dayplus=${week_dayplus}Sun							          
+							fi
+							week_dayplus="$(echo "$week_dayplus" | sed 's/\,$/\n/g')"
+							
+							if [ "$start_min" == "00" ]; then
+								if [ "$start_hour" -lt 0 ]; then
+									start_hour=$(expr 23)
+									echo "0-59/6 $start_hour * * $week_dayless /sbin/sendto.sh $i" >> /etc/crontabs/root
+								else
+									echo "0-59/6 $start_hour * * $weekdays /sbin/sendto.sh $i" >> /etc/crontabs/root
+								fi
+								start_hour=$(expr $start_hour + 1 )
+							else # [ "$start_min" == "30" ];
+								if [ "$start_hour" -lt 0 ]; then
+									start_hour=$(expr 23)
+									echo "30-59/6 $start_hour * * $week_dayless /sbin/sendto.sh $i" >> /etc/crontabs/root
+								else
+									echo "30-59/6 $start_hour * * $weekdays /sbin/sendto.sh $i" >> /etc/crontabs/root
+								fi
+								start_hour=$(expr $start_hour + 1 )
+							fi							
+							if [ "$stop_min" == "30" ]; then
+								if [ "$stop_hour" -lt 0 ]; then
+									stop_hour=$(expr 23)
+									echo "0-30/6 $stop_hour * * $week_dayless /sbin/sendto.sh $i" >> /etc/crontabs/root
+								else
+									echo "0-30/6 $stop_hour * * $weekdays /sbin/sendto.sh $i" >> /etc/crontabs/root
+								fi
+								stop_hour=$(expr $stop_hour - 1 )
+							fi
+							if [ "$start_hour" == "24" ]; then
+									start_hour=$(expr 0)
+							fi
+							if [ "$stop_hour" == "-1" ]; then
+									stop_hour=$(expr 0)
+							fi
+							if [ $start_hour != $stop_hour ]; then
+								echo "0-59/6 $start_hour-$stop_hour * * $weekdays /sbin/sendto.sh $i" >> /etc/crontabs/root
+							fi
+							if [ "$stop_min" == "00" ]; then
+								stop_hour=$(expr $stop_hour + 1 )
+								if [ "$stop_hour" -ge 24 ]; then
+									stop_hour=0
+									echo "2 $stop_hour * * $week_dayplus /sbin/resume.sh $i" >> /etc/crontabs/root				
+								else
+									echo "2 $stop_hour * * $weekdays /sbin/resume.sh $i" >> /etc/crontabs/root
+								fi
+							fi
+							if [ "$stop_min" == "30" ]; then
+								stop_hour=$(expr $stop_hour + 1 ) 
+								if [ "$stop_hour" -ge 24 ]; then
+									stop_hour=0
+									echo "32 $stop_hour * * $week_dayplus /sbin/resume.sh $i" >> /etc/crontabs/root			
+								else
+									echo "32 $stop_hour * * $weekdays /sbin/resume.sh $i" >> /etc/crontabs/root
+								fi
+							fi			
+						fi						
+					fi		
+				else # not in dst
+							Mon="$(echo "$weekdays" | grep "Mon")"
+							Tue="$(echo "$weekdays" | grep "Tue")"
+							Wed="$(echo "$weekdays" | grep "Wed")"
+							Thu="$(echo "$weekdays" | grep "Thu")"
+							Fri="$(echo "$weekdays" | grep "Fri")"
+							Sat="$(echo "$weekdays" | grep "Sat")"
+							Sun="$(echo "$weekdays" | grep "Sun")"
+							weekchange=" " 
+							week_dayplus=" " 
+							
+							if [ ${Sun} != " " ]; then
+							     week_dayplus=${week_dayplus}Mon,
+							fi
+							if [ ${Mon} != " " ]; then
+							     week_dayplus=${week_dayplus}Tue,							           
+							fi
+							if [ ${Tue} != " " ]; then
+							     week_dayplus=${week_dayplus}Wed,							          
+							fi
+							if [ ${Wed} != " " ]; then
+							     week_dayplus=${week_dayplus}Thu,		           
+							fi
+							if [ ${Thu} != " " ]; then
+							     week_dayplus=${week_dayplus}Fri,							           
+							fi
+							if [ ${Fri} != " " ]; then
+							     week_dayplus=${week_dayplus}Sat,							          
+							fi
+							if [ ${Sat} != " " ]; then
+							     week_dayplus=${week_dayplus}Sun							          
+							fi
+							week_dayplus="$(echo "$week_dayplus" | sed 's/\,$/\n/g')"
+										
+							
+					if [ $start_hour != $stop_hour ] || [ $start_min != $stop_min ]; then
+						start_hour=$(expr $start_hour + 0)
+						stop_hour=$(expr $stop_hour + 0)
+						if [ "$stop_hour" == "24" ]; then 
+								stop_hour=23
+								weekchange=1
+						fi	
+						if [ "$start_min" == "30" ]; then
+							echo "30-59/6 $start_hour * * $weekdays /sbin/sendto.sh $i" >> /etc/crontabs/root
+							start_hour=$(expr $start_hour + 1 )
+						fi
+						if [ "$stop_min" == "30" ]; then
+							echo "0-30/6 $stop_hour * * $weekdays /sbin/sendto.sh $i" >> /etc/crontabs/root
+							stop_hour=$(expr $stop_hour - 1 )
+							if [ "$stop_hour" -lt 0 ]; then 
+								stop_hour=$(expr 0 )
+							fi
+						fi
+						if [ $start_hour != $stop_hour ]; then 
+							echo "0-59/6 $start_hour-$stop_hour * * $weekdays /sbin/sendto.sh $i" >> /etc/crontabs/root
+						fi
+						if [ "$stop_min" == "00" ]; then 
+							if [ "$stop_hour" != "23" ]; then					
+								stop_hour=$(expr $stop_hour + 1 ) 
+							fi
+							if [ "$weekchange" == "1" ]; then 
+								stop_hour=$(expr 0 )
+								echo "2 $stop_hour * * $week_dayplus /sbin/resume.sh $i" >> /etc/crontabs/root
+							else
+								echo "2 $stop_hour * * $weekdays /sbin/resume.sh $i" >> /etc/crontabs/root
+							fi	
+						fi
+						if [ "$stop_min" == "30" ]; then					
+								stop_hour=$(expr $stop_hour + 1)
+							if [ "$stop_hour" -ge 24 ]; then
+								stop_hour=0
+								echo "32 $stop_hour * * $week_dayplus /sbin/resume.sh $i" >> /etc/crontabs/root
+							else
+								echo "32 $stop_hour * * $weekdays /sbin/resume.sh $i" >> /etc/crontabs/root
+							fi	
+						fi
+					fi
+				fi
+			fi
+			i=$(( $i + 1 ))
+		done
+	fi
+	
+	crond -c /etc/crontabs
+
+	return 0 
+}
+
+cmd=$1
+shift
+case "$cmd" in
+	--help|help) usage ;;
+	start|stop|reload|restart|init)
+
+		reload_parentalMonitor
+		
+		exit $?
+	;;
+esac
+
+exit $?

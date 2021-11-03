@@ -1,0 +1,64 @@
+#!/bin/sh
+
+usb_slot="$1"
+usb_node="$2"
+dev_node="$3"
+
+[ "$usb_slot" == "" || "$usb_node" == "" || "$dev_node" == "" ] && exit 1
+
+mkdir -p /tmp/storage/$usb_slot
+
+mount_pt=""
+mount_failed=0
+
+part_num="$(echo $dev_node | awk -F"sd[a-z]" '{print $2}')"
+
+if [ -n "$part_num" ]; then
+	mount_pt="${usb_slot}_${usb_node}_${part_num}"
+else
+	mount_pt="${usb_slot}_$usb_node"
+fi
+
+mkdir -p /tmp/storage/$usb_slot/$mount_pt
+
+ck_ntfs=$(ntfsck -c /dev/$dev_node |grep "NTFS signature is missing")
+
+if [ -z "$ck_ntfs" ];then
+	mount -t tntfs -o iostreaming,umask=0000,errors=continue /dev/$dev_node /tmp/storage/$usb_slot/$mount_pt 2> /tmp/${mount_pt}_mount_err
+			
+	#check_status=$(cat /tmp/${mount_pt}_mount_err)
+	check_status=$(df |grep "/tmp/storage/$usb_slot/$mount_pt" |awk '{print $6}');
+			
+	if [ "$check_status" == "" ];then
+		mount_failed=1
+	fi
+else
+	mount -o iocharset=utf8,umask=0000,errors=continue /dev/$dev_node /tmp/storage/$usb_slot/$mount_pt 2> /tmp/${mount_pt}_mount_err
+	#check_status=$(cat /tmp/${mount_pt}_mount_err)
+
+	check_status=$(df |grep "/tmp/storage/$usb_slot/$mount_pt" |awk '{print $6}');
+			
+	if [ "$check_status" == "" ];then
+				
+		rm /tmp/${mount_pt}_mount_err
+				
+		mount_failed=1
+				
+		mount -a /dev/$dev_node /tmp/storage/$usb_slot/$mount_pt 2>/tmp/${mount_pt}_mount_err
+		chmod -R 777 /tmp/storage/$usb_slot/$mount_pt
+					
+		#check_status=$(cat /tmp/${mount_pt}_mount_err)
+		check_status=$(df |grep "/tmp/storage/$usb_slot/$mount_pt" |awk '{print $6}');
+		
+		if [ "$check_status" != "" ];then
+			mount_failed=0
+		fi
+	fi
+fi
+			
+rm -f /tmp/${mount_pt}_mount_err	
+		
+if [ "$mount_failed" -eq 1 ];then
+	rm -rf /tmp/storage/$usb_slot/$mount_pt
+	exit 0
+fi		

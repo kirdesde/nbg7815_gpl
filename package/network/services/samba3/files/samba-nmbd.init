@@ -1,0 +1,12 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2011 OpenWrt.org
+
+START=61
+
+start() {
+	/usr/sbin/nmbd -D
+}
+
+stop() {
+	killall nmbd
+}

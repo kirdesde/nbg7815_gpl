@@ -1,0 +1,81 @@
+#!/bin/sh
+
+LOG_FILE="/tmp/link_monitor_log"
+
+if [ -f $LOG_FILE ]; then
+  line_count=$(wc -l $LOG_FILE | cut -f1 -d' ')
+
+  if [ $line_count -gt 100 ]; then
+    rm $LOG_FILE
+  fi
+fi
+
+brlan="br-lan"
+
+#after reading/writing data on USB, it will release cash memory
+top -n 1 > /tmp/top_log
+
+io_value=$( cat /tmp/top_log | grep "CPU:" | awk '{print $10}' | awk '{FS="%"} {print $1}' )
+
+if [ $io_value -ge 1 ] ;then
+  echo 0 > /tmp/io_value_sum
+fi
+
+[ -f /tmp/top_log ] && {
+  rm /tmp/top_log
+}
+
+if [ -f /tmp/io_value_sum ] ;then
+  io_value_sum=$(cat /tmp/io_value_sum)
+  sum=$(($io_value_sum+1))
+
+  echo $sum > /tmp/io_value_sum
+
+  if [ $sum -eq 30 ] ;then
+    echo 3 > /proc/sys/vm/drop_caches
+    rm /tmp/io_value_sum
+  fi
+fi
+
+## Check to DUT connects status
+ping 8.8.8.8 -c 1 | grep time > /var/connect_internet
+connect_value=$(cat /var/connect_internet)
+if [ "$connect_value" = "" ] ;then
+  ## ping fail, use wget to check
+  rm /tmp/check_internet_ok_wget
+  chk_internet wget "http://google.com"&
+  ## wget & nslookup has no time out setting option, we add sleep for time out purpose
+  sleep 2
+  if [ -e /tmp/check_internet_ok_wget ];then
+    #echo "wget OK"  > /dev/console
+    rm /tmp/check_internet_ok_nslookup
+  else
+    #echo "wget time out"  > /dev/console
+    killall chk_internet
+    rm /tmp/check_internet_ok_nslookup
+    chk_internet nslookup "google.com" "8.8.4.4"&
+    sleep 2
+    [ -e /tmp/check_internet_ok_nslookup ] || {
+      #echo nslookup time out > /dev/console
+      killall chk_internet
+    }
+  fi
+else
+  rm /tmp/check_internet_ok_wget
+  rm /tmp/check_internet_ok_nslookup
+fi
+
+if [ "$connect_value" != "" ] || [ -e /tmp/check_internet_ok_wget ] || [ -e /tmp/check_internet_ok_nslookup ];then
+  [ ! -f /tmp/zyxel_ntpclient_settime.flag ] && . /etc/hotplug.d/iface/20-ntpclient
+else
+  brlan_proto=$(uci get network.lan.proto)
+  if [ "$brlan_proto" == "dhcp" ] ;then
+	udhcpc_pid=$(cat /var/run/udhcpc-$brlan.pid)
+	#release
+	kill -SIGUSR2 $udhcpc_pid
+	sleep 2
+	#renew
+	kill -SIGUSR1 $udhcpc_pid
+  fi
+fi
+

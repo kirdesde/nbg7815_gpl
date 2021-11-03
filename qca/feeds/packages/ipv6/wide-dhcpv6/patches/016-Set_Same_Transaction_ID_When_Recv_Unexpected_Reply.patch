@@ -1,0 +1,52 @@
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -2236,10 +2236,11 @@
+ 				iav = dhcp6_find_listval(&optinfo->iana_list,
+ 					DHCP6_LISTVAL_IANA, &iaparam, 0);
+ 				if (!iav) {
++					ev->timeouts++;
+ 					client6_send(ev);
+ 
+-					dhcp6_set_timeoparam(ev);
+-					dhcp6_reset_timer(ev);
++					//dhcp6_set_timeoparam(ev);
++					dhcp6_reset_timer(ev);					
+ 					dprintf(LOG_INFO, FNAME, "no IA_NA option after sending RENEW or REBIND packet");
+ 					return (0);
+ 				}
+@@ -2253,9 +2254,10 @@
+ 				iav = dhcp6_find_listval(&optinfo->iapd_list,
+ 					DHCP6_LISTVAL_IAPD, &iaparam, 0);
+ 				if (!iav) {
++					ev->timeouts++;
+ 					client6_send(ev);
+ 
+-					dhcp6_set_timeoparam(ev);
++					//dhcp6_set_timeoparam(ev);
+ 					dhcp6_reset_timer(ev);
+ 					dprintf(LOG_INFO, FNAME, "no IA_PD option after sending RENEW or REBIND packet");
+ 					return (0);
+@@ -2286,9 +2288,10 @@
+ 	 		 * The client retransmits the original message.
+ 	  		 */
+ 			if (lv->val_num16 == DH6OPT_STCODE_UNSPECFAIL) { 
++				ev->timeouts++;
+ 				client6_send(ev);
+ 
+-				dhcp6_set_timeoparam(ev);
++				//dhcp6_set_timeoparam(ev);
+ 				dhcp6_reset_timer(ev);
+ 				dprintf(LOG_INFO, FNAME, "DH6OPT_STCODE_UNSPECFAIL");
+ 				return (0);
+@@ -2306,9 +2309,10 @@
+ 			 * client resends the original message using multicast.
+ 	  		 */
+ 			if (lv->val_num16 == DH6OPT_STCODE_USEMULTICAST) {
++				ev->timeouts++;
+ 				client6_send(ev);
+ 
+-				dhcp6_set_timeoparam(ev);
++				//dhcp6_set_timeoparam(ev);
+ 				dhcp6_reset_timer(ev);
+ 				dprintf(LOG_INFO, FNAME, "DH6OPT_STCODE_USEMULTICAST");
+ 				return (0);

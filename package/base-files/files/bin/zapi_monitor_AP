@@ -1,0 +1,26 @@
+#!/bin/sh
+
+# check zapi-service daemon is alive
+zapi_service_path="/bin/zapi-service"
+if [ -e "$zapi_service_path" ]; then
+    # check every 15 seconds
+    zapi_service_check_result=$(ps | grep zapi-service | grep -v grep)
+    if [ "$zapi_service_check_result" == "" ]; then
+        /usr/sbin/reload-zapi-service.sh
+        exit
+    fi
+
+    # check zapi-service socket is alive.
+    /usr/sbin/check-zapi-service-is-alive.sh
+fi
+
+# zapi-service memory protection
+zapi_service_memory=$(ps | grep zapi-service | grep -v grep | awk -F' ' '{printf $3}')
+zapi_service_pid=$(ps | grep zapi-service | grep -v grep | awk -F' ' '{printf $1}')
+if [ "$zapi_service_memory" -ge "20480" ]; then
+  echo "zapi-service memory is bigger than 20480 Kbytes. Kill zapi-service !!!"
+  /usr/sbin/reload-zapi-service.sh -f
+fi
+
+# check cyber security is alive
+# /usr/sbin/check-cyber-security-is-alive.sh

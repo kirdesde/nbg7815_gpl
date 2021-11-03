@@ -1,0 +1,61 @@
+--- a/upnpdescstrings.h	2016-10-27 17:03:32.490932786 +0800
++++ b/upnpdescstrings.h	2016-10-27 17:05:15.693750561 +0800
+@@ -10,12 +10,12 @@
+ #include "config.h"
+ 
+ /* strings used in the root device xml description */
+-#define ROOTDEV_FRIENDLYNAME		OS_NAME " router"
+-#define ROOTDEV_MANUFACTURER		OS_NAME
+-#define ROOTDEV_MANUFACTURERURL		OS_URL
+-#define ROOTDEV_MODELNAME			OS_NAME " router"
+-#define ROOTDEV_MODELDESCRIPTION	OS_NAME " router"
+-#define ROOTDEV_MODELURL			OS_URL
++#define ROOTDEV_FRIENDLYNAME		"Zyxel NBG7815 Router"
++#define ROOTDEV_MANUFACTURER		"Zyxel Communications Corp."
++#define ROOTDEV_MANUFACTURERURL		"http://www.zyxel.com"
++#define ROOTDEV_MODELNAME		"Zyxel NBG7815 Router"
++#define ROOTDEV_MODELDESCRIPTION	"Zyxel NBG7815 Router"
++#define ROOTDEV_MODELURL		""
+ 
+ #define WANDEV_FRIENDLYNAME			"WANDevice"
+ #define WANDEV_MANUFACTURER			"MiniUPnP"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

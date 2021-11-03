@@ -1,0 +1,93 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2008-2011 OpenWrt.org
+
+#. /sbin/functions.sh
+START=60
+
+start() {
+	dlna_enable=$(uci_get dlna main enabled)
+	if [ "$dlna_enable" == "0" ]; then
+		echo "dlna nothing to do......"
+		exit 0
+	fi
+	cp /etc/minidlna.conf /var
+	[ -d /var/minidlna ] && rm -rf /var/minidlna
+	mkdir /var/minidlna 
+	
+	mount_partition1=$(df |grep "/tmp/storage/usb1" |awk '{print $6}');
+	echo "mount_partition1=" $mount_partition1
+	mount_partition2=$(df |grep "/tmp/storage/usb2" |awk '{print $6}');
+	echo "mount_partition2=" $mount_partition2
+	
+	if [ "$mount_partition1" != "" ];then
+		usb1_photo=$(uci_get dlna main usb1_photo)
+		if [ "$usb1_photo" == "1" ]; then
+			ln -s $mount_partition1/photo/ /var/minidlna/photo
+		fi
+	
+		usb1_music=$(uci_get dlna main usb1_music)
+		if [ "$usb1_music" == "1" ]; then
+			ln -s $mount_partition1/music/ /var/minidlna/music
+		fi
+	
+		usb1_video=$(uci_get dlna main usb1_video)
+		if [ "$usb1_video" == "1" ]; then
+			ln -s $mount_partition1/video/ /var/minidlna/video
+		fi
+		
+	fi
+	
+	if [ "$mount_partition2" != "" ];then
+		usb2_photo=$(uci_get dlna main usb2_photo)
+		if [ "$usb2_photo" == "1" ]; then
+			ln -s $mount_partition2/photo/ /var/minidlna/photo
+		fi
+	
+		usb2_music=$(uci_get dlna main usb2_music)
+		if [ "$usb2_music" == "1" ]; then
+			ln -s $mount_partition2/music/ /var/minidlna/music
+		fi
+	
+		usb2_video=$(uci_get dlna main usb2_video)
+		if [ "$usb2_video" == "1" ]; then
+			ln -s $mount_partition2/video/ /var/minidlna/video
+		fi
+		
+	fi
+	
+	/usr/bin/minidlna -R -f /var/minidlna.conf &
+	
+}
+
+stop() {
+	#killall minidlna
+	dlna_pid=$(ps | grep "minidlna" | grep -v "grep" | awk '{print $1}')
+	kill $dlna_pid
+	for i in 1 2 3 4 5 6 7 8 9 10
+    do
+       dlna_pid=$(ps | grep "minidlna" | grep -v "grep" | awk '{print $1}')
+	   echo "dlna_pid=" $dlna_pid
+	   if [ "$dlna_pid" == "" ]; then
+			echo "dlna_pid is null"
+			break
+	   fi
+	   sleep 2
+    done
+
+	
+	
+}
+
+case "$1" in
+     "boot"|"start" )
+	start
+        ;;
+    "stop" )
+	stop
+        ;;
+    "restart" )
+	stop
+	sleep 2
+	start
+        ;;
+esac

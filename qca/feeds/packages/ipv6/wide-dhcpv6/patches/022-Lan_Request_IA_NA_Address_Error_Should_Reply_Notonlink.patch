@@ -1,0 +1,32 @@
+--- a/dhcp6s.c	2016-01-26 16:39:41.255827300 +0800
++++ b/dhcp6s.c	2016-01-27 10:00:32.566280551 +0800
+@@ -1608,6 +1608,29 @@
+ 					goto fail;
+ 				}
+ 			}
++			else{
++				struct dhcp6_listval *iaddr,*riana,*raddr;
++				if (iaddr = TAILQ_FIRST(&iana->sublist)) {
++					if (riana = TAILQ_FIRST(&roptinfo.iana_list)){
++		    			if (raddr = TAILQ_FIRST(&riana->sublist)){
++							if (memcmp(&raddr->val_prefix6.addr, &iaddr->val_prefix6.addr, 8) != 0){
++								dhcp6_clear_list(&roptinfo.iana_list);
++								if (make_ia_stcode(DHCP6_LISTVAL_IANA,
++				  				  iana->val_ia.iaid,
++							    DH6OPT_STCODE_NOTONLINK,
++							    &roptinfo.iana_list)) {
++								dprintf(LOG_NOTICE, FNAME,
++							    "failed to make an option list");
++								dhcp6_clear_list(&conflist);
++								goto fail;
++								}
++							}
++		    			}
++		    		}
++				}
++			}/*Kerker 2016/01/25
++			  *	reply Notonlink when receive request with invalid IA_NA
++			  */
+ 		}
+ 
+ 		dhcp6_clear_list(&conflist);

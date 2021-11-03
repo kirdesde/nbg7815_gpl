@@ -1,0 +1,15 @@
+diff --git a/ntpclient.c b/ntpclient.c
+--- a/ntpclient.c
++++ b/ntpclient.c
+@@ -199,6 +199,11 @@ static void set_time(struct ntptime *new)
+ 		printf("set time to %lu.%.6lu\n", tv_set.tv_sec, tv_set.tv_usec);
+ 	}
+ #endif
++	if (access("/tmp/zyxel_ntpclient_settime.flag", F_OK) != 0) {
++		FILE *file_ptr = fopen("/tmp/zyxel_ntpclient_settime.flag", "w");
++		if (file_ptr != NULL) fclose(file_ptr);
++		remove("/tmp/zyxel_synctime_count");
++	}
+ }
+ 
+ static void ntpc_gettime(u32 *time_coarse, u32 *time_fine)

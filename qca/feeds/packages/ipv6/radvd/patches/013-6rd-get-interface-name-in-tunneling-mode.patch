@@ -1,0 +1,30 @@
+--- radvd-1.8.3_old/send.c	2016-02-01 17:06:06.918311887 +0800
++++ radvd-1.8.3_new/send.c	2016-02-01 17:07:08.561514343 +0800
+@@ -165,12 +165,22 @@
+ 	// get current WAN ifname.
+ 	FILE *fp_ifname = NULL;
+ 	char m_ifname[50] = "";
+-	if((fp_ifname = fopen("/tmp/curr_wan_ifname", "r")) == NULL ){
+-		fprintf(stderr, "fail to open tmpcurr_wan_ifname file\n");
+-		exit(1);
++	if( strstr(m_6rdenable, "1") )
++		strcpy(m_ifname, "6rd-wan6rd");
++	else if( strstr(m_6to4enable, "1") )
++		strcpy(m_ifname, "6rd-wan6to4");
++	else if( strstr(m_6in4enable, "1") )
++		strcpy(m_ifname, "6rd-wan6in4");
++	else
++	{
++		if((fp_ifname = fopen("/tmp/curr_wan_ifname", "r")) == NULL )
++		{
++			fprintf(stderr, "fail to open tmpcurr_wan_ifname file\n");
++			exit(1);
++		}
++		fscanf(fp_ifname,"%s",m_ifname);
++		fclose(fp_ifname);
+ 	}
+-	fscanf(fp_ifname,"%s",m_ifname);
+-	fclose(fp_ifname);
+ 
+ 	char m_msg[100] = "";
+ 

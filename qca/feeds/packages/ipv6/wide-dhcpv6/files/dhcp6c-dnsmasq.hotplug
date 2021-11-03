@@ -1,0 +1,140 @@
+#!/bin/sh
+
+. /etc/functions.sh
+
+getoption() {
+	local cfg=$1
+	config_get resolvfile "$cfg" resolvfile
+}
+
+config_load dhcp6c
+
+dns=
+config_get dns basic dns none
+[ $dns != "dnsmasq" ] && return 0
+
+if [ "$ACTION" = "start" ]; then
+	uci delete radvd.rdnss.addr
+	uci commit radvd
+
+   	uci delete dhcp6s.basic.domain_name_server1
+   	uci delete dhcp6s.basic.domain_name_server2
+   	uci delete dhcp6s.basic.domain_name_server3
+   	uci commit dhcp6s
+
+	domain_name_servers=
+	config_get domain_name_servers state domain_name_servers
+
+	if [ -n "$domain_name_servers" ]; then
+
+		config_load dhcp
+
+		resolvfile=
+		config_foreach getoption dnsmasq
+
+		if [ -n "$resolvfile" ]; then
+
+			cp -pf $resolvfile "$resolvfile.dhcp6c_backup"
+
+            ## clean DNSv6 in resolvfile
+            cat $resolvfile |grep -v ":" > /var/tmpauto
+            cp -pf /var/tmpauto $resolvfile
+            rm -rf /var/tmpauto
+
+            ISP1=""
+            ISP2=""
+            ISP3=""
+            ISPwriteCount=0
+			for nameserver in $domain_name_servers; do
+                if [ $ISPwriteCount -lt 1 ];then
+                    ISP1=$nameserver
+                elif [ $ISPwriteCount -lt 2 ];then
+                    ISP2=$nameserver
+                elif [ $ISPwriteCount -lt 3 ];then
+                    ISP3=$nameserver
+                fi
+                ISPwriteCount=$((ISPwriteCount+1))
+			done
+
+            ## write into dhcp6s.uci
+            USER1_type=$(uci get network.wan.dnsv6_1 |awk -F "," '{print $1}')
+            USER1=$(uci get network.wan.dnsv6_1 |awk -F "," '{print $2}')
+            USER2_type=$(uci get network.wan.dnsv6_2 |awk -F "," '{print $1}')
+            USER2=$(uci get network.wan.dnsv6_2 |awk -F "," '{print $2}')
+            USER3_type=$(uci get network.wan.dnsv6_3 |awk -F "," '{print $1}')
+            USER3=$(uci get network.wan.dnsv6_3 |awk -F "," '{print $2}')
+            TOTwriteCount=0
+            for count in 1 2 3; do
+                if [ $TOTwriteCount -eq 0 ]; then
+                    if [ "$USER1_type" == "ISP" -a "$USER1" == "" ]; then
+                        echo nameserver $ISP1 >> $resolvfile
+                        uci set dhcp6s.basic.domain_name_server1="$ISP1"
+                        uci add_list radvd.rdnss.addr="$ISP1"
+                    else
+                        echo nameserver $USER1 >> $resolvfile
+                        uci set dhcp6s.basic.domain_name_server1="$USER1"
+                        uci add_list radvd.rdnss.addr="$USER1"
+                    fi
+                    TOTwriteCount=$((TOTwriteCount+1))
+
+                elif [ $TOTwriteCount -eq 1 ]; then
+                    if [ "$USER2_type" == "ISP" -a "$USER2" == "" ]; then
+                        echo nameserver $ISP2 >> $resolvfile
+                        uci set dhcp6s.basic.domain_name_server2="$ISP2"
+                        uci add_list radvd.rdnss.addr="$ISP2"
+                    else
+                        echo nameserver $USER2 >> $resolvfile
+                        uci set dhcp6s.basic.domain_name_server2="$USER2"
+                        uci add_list radvd.rdnss.addr="$USER2"
+                    fi
+                    TOTwriteCount=$((TOTwriteCount+1))
+
+                elif [ $TOTwriteCount -eq 2 ]; then
+                    if [ "$USER3_type" == "ISP" -a "$USER3" == "" ]; then
+                        echo nameserver $ISP3 >> $resolvfile
+                        uci set dhcp6s.basic.domain_name_server3="$ISP3"
+                        uci add_list radvd.rdnss.addr="$ISP3"
+                    else
+                        echo nameserver $USER3 >> $resolvfile
+                        uci set dhcp6s.basic.domain_name_server3="$USER3"
+                        uci add_list radvd.rdnss.addr="$USER3"
+                    fi
+                    TOTwriteCount=$((TOTwriteCount+1))
+                fi
+                uci commit dhcp6s
+                uci commit radvd
+            done
+		fi
+	fi
+
+fi
+
+if [ "$ACTION" = "stop" ]; then
+	config_load dhcp
+
+	resolvfile=
+	dns_flag1="0"
+	dns_flag2="0"
+	dns_flag3="0"
+	dhcp6s_ps
+
+	config_foreach getoption dnsmasq
+	if [ -f "$resolvfile.dhcp6c_backup" ]; then
+		mv -f "$resolvfile.dhcp6c_backup" $resolvfile
+	fi 
+
+   	## delete all DNS on radvd.uci
+	uci delete radvd.rdnss.addr
+	uci commit radvd
+
+   	## delete all DNS on dhcp6s.uci
+   	uci del dhcp6s.basic.domain_name_server1
+   	uci del dhcp6s.basic.domain_name_server2
+   	uci del dhcp6s.basic.domain_name_server3
+	uci commit dhcp6s
+
+	## Restart radvd&dhcp6s
+	/etc/init.d/radvd reload config
+
+fi
+

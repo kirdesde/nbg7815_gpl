@@ -1,0 +1,65 @@
+#!/bin/sh /etc/rc.common
+START=95
+STOP=20
+
+. /etc/functions.sh
+include /lib/config
+
+proto=$(uci_get network wan proto)
+if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+	WAN="$proto"-wan
+else
+	WAN=`uci get network.wan.ifname`
+fi
+
+boot() {
+	config_load "upnpd"
+	config_get upnp_enable config enabled
+	config_load "system"
+	config_get mode main system_mode
+	[ "$upnp_enable" -eq 1 ] && [ "$mode" -eq 1 ] && {
+		/sbin/act_miniupnpd
+		echo "miniupnpd starting ..."
+	}
+}
+
+start() {
+	config_load "upnpd"
+	config_get upnp_enable config enabled 
+	config_load "system"
+	config_get mode main system_mode
+	[ "$upnp_enable" -eq 1 ] && [ "$mode" -eq 1 ] && {
+		/sbin/act_miniupnpd
+		echo "miniupnpd starting ..."
+		## iptables app reorder	
+		iptables -t nat -N MINIUPNPD 2>/dev/null
+		iptables -t nat -N MINIUPNPD-POSTROUTING 2>/dev/null
+		iptables -t mangle -N MINIUPNPD 2>/dev/null
+		iptables -N MINIUPNPD 2>/dev/null
+				
+		#### Move to /sbin/nat to control
+#		iptables -t nat -I PREROUTING -i $WAN -j MINIUPNPD 2>/dev/null			
+		/lib/firewall/iptables_app_order
+	}
+}
+
+stop() {
+	pnpd_pid=$(cat /var/run/miniupnpd.pid) 2>&- >&-
+	kill $pnpd_pid 2>&-
+
+	iptables -t nat -F MINIUPNPD 2>/dev/null
+	iptables -t nat -D PREROUTING -i $WAN -j MINIUPNPD
+	iptables -t nat -X MINIUPNPD 2>/dev/null
+
+	iptables -t nat -F MINIUPNPD-POSTROUTING 2>/dev/null
+	iptables -t nat -D POSTROUTING -o $WAN -j MINIUPNPD-POSTROUTING
+	iptables -t nat -X MINIUPNPD-POSTROUTING 2>/dev/null
+
+	iptables -t mangle -F MINIUPNPD 2>/dev/null
+	iptables -t mangle -D PREROUTING -i $WAN -j MINIUPNPD	
+	iptables -t mangle -X MINIUPNPD 2>/dev/null
+	
+	iptables -F MINIUPNPD 2>/dev/null
+	iptables -D FORWARD -i $WAN ! -o $WAN -j MINIUPNPD
+	iptables -X MINIUPNPD 2>/dev/null
+}

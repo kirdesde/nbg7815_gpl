@@ -1,0 +1,23 @@
+config atf-config-group
+	option ifname 'ath0'
+	option group_ifname 'ath0 ath2'
+	option group 'private'
+	option airtime '70'
+
+config atf-config-group
+	option ifname 'ath0'
+	option group_ifname 'ath1 ath4 ath5'
+	option group 'public'
+	option airtime '30'
+
+config atf-config-group
+	option ifname 'ath10'
+	option group_ifname 'ath10 ath12'
+	option group 'private'
+	option airtime '70'
+
+config atf-config-group
+	option ifname 'ath10'
+	option group_ifname 'ath11 ath14 ath15'
+	option group 'public'
+	option airtime '30'

@@ -1,0 +1,22 @@
+#!/bin/sh
+
+##trigger by RA_status
+return 0 
+
+include /lib/network
+config_load "dhcp6s"
+
+enabled=
+config_get_bool enabled basic enabled 0
+[ $enabled -eq 0 ] && return 0
+
+server_interface=
+config_get server_interface basic interface
+
+if [ "$INTERFACE" = "$server_interface" ] && [ "$ACTION" = "ifup" ]; then
+	/etc/init.d/dhcp6s start
+fi
+
+if [ "$INTERFACE" = "$server_interface" ] && [ "$ACTION" = "ifdown" ]; then
+	/etc/init.d/dhcp6s stop
+fi

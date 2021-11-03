@@ -1,0 +1,114 @@
+#!/bin/sh
+
+echo "Start to switch Router to AP" > /dev/console
+killall -9  WanPort_monitor
+
+backhaul_pid=$(ps | grep -w backhaul_monitor | grep -v grep)
+if [ -n "$backhaul_pid" ]; then
+	op_role=$(uci get system.main.operation_role)
+	if [ "$op_role" == "controller" ]; then
+		echo network_reload > /tmp/backhaul_fifo
+		sleep 2
+	fi
+fi
+
+#killall link_monitor
+link_monitor_pid=$(ps | grep -w link_monitor | grep watch | grep -v 'grep' | awk -F " " '{print $1}')
+if [ -n "$link_monitor_pid" ]; then
+	kill $link_monitor_pid
+fi
+#killall link_monitor_AP
+link_monitor_AP_pid=$(ps | grep -w link_monitor_AP | grep watch | grep -v 'grep' | awk -F " " '{print $1}')
+if [ -n "$link_monitor_AP_pid" ]; then
+	kill $link_monitor_AP_pid
+fi
+
+/etc/init.d/dnsmasq stop
+/etc/init.d/bwm stop
+/etc/init.d/gre_daemon stop
+/etc/init.d/backhaul_monitor stop
+/etc/init.d/myZyXELcloud-Agent stop
+
+lan_ip=$(uci get network.lan.ipaddr)
+lan_mask=$(uci get network.lan.netmask)
+lan_gw=$(uci get network.lan.gateway)
+wan_proto=$(uci get network.wan.proto)
+wan_mtu=$(uci get network.wan.mtu)
+old_wan_proto=$(uci get network.general.backup_wan_proto)
+old_wan_mtu=$(uci get network.general.backup_wan_mtu)
+old_lan_ip=$(uci get network.general.backup_lan_ip)
+old_lan_mask=$(uci get network.general.backup_lan_mask)
+old_lan_gw=$(uci get network.general.backup_lan_gw)
+old_aplan_ip=$(uci get network.general.backup_aplan_ip)
+old_aplan_mask=$(uci get network.general.backup_aplan_mask)
+old_aplan_gw=$(uci get network.general.backup_aplan_gw)
+uci set network.general.backup_lan_ip=$lan_ip
+uci set network.general.backup_lan_mask=$lan_mask
+uci set network.general.backup_lan_gw=$lan_gw
+uci set network.general.backup_wan_proto=$wan_proto
+uci set network.general.backup_wan_mtu=$wan_mtu
+uci set network.lan.ifname="eth0 eth1 eth2 eth3 eth4 eth5"
+uci set network.lan.ipaddr=$old_aplan_ip
+uci set network.lan.netmask=$old_aplan_mask
+uci set network.lan.gateway.=$old_aplan_gw
+uci set network.lan.proto=dhcp
+uci set network.lan.hairpin=0
+uci set network.wan.ifname=""
+uci set network.wan.proto=""
+uci set network.wan.mtu=""
+uci commit network
+
+uci set hyd.config.Mode=HYROUTER
+uci commit hyd
+
+uci set system.main.system_mode=2
+uci set system.main.operation_role="controller"
+uci commit system
+
+iptables -F;iptables -X;iptables -Z
+iptables -F -t mangle;iptables -X -t mangle;iptables -Z -t mangle
+iptables -F -t nat;iptables -X -t nat;iptables -Z -t nat
+iptables -F -t raw;iptables -X -t raw;iptables -Z -t raw
+iptables -P INPUT ACCEPT; iptables -P FORWARD ACCEPT
+
+#/etc/init.d/qos boot
+#luci-reload password luci_statistics network dhcp dnsmasq qca-nss-ecm RA_dhcp6c webstr_filter_ex qos
+/etc/init.d/password restart
+/etc/init.d/luci_statistics restart
+/etc/init.d/network restart
+#/etc/init.d/wireless restart
+#Backhaul
+#/sbin/wifi up wifi2
+/etc/init.d/firewall restart
+#/etc/init.d/firewall6 restart
+/etc/init.d/telnet restart
+#/etc/init.d/RA_dhcp6c restart
+/etc/init.d/dnsmasq restart
+/etc/init.d/qca-nss-ecm restart
+#/etc/init.d/webstr_filter restart
+#/etc/init.d/webstr_filter_ex restart
+/etc/init.d/wireless_scheduling restart
+/etc/init.d/wireless_scheduling5G restart
+/etc/init.d/wireless_macfilter restart
+#/etc/init.d/qos restart
+#killall -9 zy1905
+/etc/init.d/zy1905 restart
+#/usr/sbin/zy1905App 4 0 0 0
+
+/etc/init.d/backhaul_monitor start
+/etc/init.d/gre_daemon start
+/etc/init.d/wan_status_monitor boot
+/etc/init.d/bwm start
+
+guest_wlan_nat start
+/etc/init.d/myZyXELcloud-Agent start
+/usr/sbin/WanPort_monitor &
+
+# Bridge mode not support cyber-security,
+# so we need to recheck status with opration mode
+zapi-cli -s '5'
+cybers_security_smart_polling_entitlement.sh
+
+/usr/sbin/RMS_monitor_init.sh stop
+
+echo "Finish switching Router to AP" > /dev/console

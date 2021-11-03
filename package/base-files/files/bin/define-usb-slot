@@ -1,0 +1,22 @@
+#!/bin/sh 
+# Copyright (C) 2009 OpenWrt.org
+
+# this is a project specified script
+# you should check/modify this script for each project and put it in the
+# platform dependent path
+
+DEVPATH="$1"
+
+####### USB2.0 bus(1 or 3); USB3.0 bus(2 or 4) #######
+# usb slot 1: bus 3 or 4
+# usb slot 2: bus 1 or 2
+USB_SLOT=""
+USB_NODE="$(echo $(basename $(echo $DEVPATH|awk -F"/host" '{print $1}')) |awk -F":" '{print $1}')"
+BUS="$(echo $USB_NODE | awk -F"-" '{print $1}')"
+
+if [ "$BUS" == "3" ] || [ "$BUS" == "4" ]; then
+	USB_SLOT="usb1"
+elif [ "$BUS" == "1" ] || [ "$BUS" == "2" ]; then
+	USB_SLOT="usb2"
+fi
+

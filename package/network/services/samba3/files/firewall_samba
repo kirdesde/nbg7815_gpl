@@ -1,0 +1,18 @@
+#!/bin/sh
+
+proto=$(uci get network.wan.proto)
+if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+	WAN="$proto"-wan
+else
+	WAN=$(uci get network.wan.ifname)
+fi
+
+/usr/sbin/iptables -F SAMBA_INPUT
+/usr/sbin/iptables -X SAMBA_INPUT
+/usr/sbin/iptables -N SAMBA_INPUT
+
+#SAMBA_PORT 137 138 139
+iptables -I SAMBA_INPUT -i $WAN -p udp --dport 137 -j DROP
+iptables -I SAMBA_INPUT -i $WAN -p udp --dport 138 -j DROP
+iptables -I SAMBA_INPUT -i $WAN -p tcp --dport 139 -j DROP
+iptables -I SAMBA_INPUT -i $WAN -p tcp --dport 445 -j DROP

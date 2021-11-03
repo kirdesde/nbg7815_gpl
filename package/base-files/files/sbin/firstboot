@@ -1,0 +1,11 @@
+#!/bin/sh
+
+### Clean /overlay
+echo "[firstboot] Clean overlay"
+/sbin/jffs2reset -y
+
+### Clean /tmp/ApplicationData/
+echo "[firstboot] Clean /tmp/ApplicationData/"
+rm -rf /tmp/ApplicationData/*
+umount -l /dev/mmcblk0p11
+mkfs.ext4 -m 0 -F /dev/mmcblk0p11

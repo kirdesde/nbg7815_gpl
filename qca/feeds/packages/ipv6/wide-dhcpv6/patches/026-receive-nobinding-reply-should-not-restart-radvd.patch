@@ -1,0 +1,142 @@
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -2544,17 +2544,21 @@ client6_recvreply(ifp, dh6, len, optinfo
+ 	}
+ 
+ 	/* update stateful configuration information */
++	int rtnVal = 0;
+ 	if (state != DHCP6S_RELEASE) {
+ #ifdef CLIENT_DECLINE_SUPPORT
+ 		ifp->current_ev = ev;
+ #endif
+-		update_ia(IATYPE_PD, &optinfo->iapd_list, ifp,
+-		    &optinfo->serverID, ev->authparam);
++		rtnVal = update_ia(IATYPE_PD, &optinfo->iapd_list, ifp,
++				&optinfo->serverID, ev->authparam);
++
+ 		update_ia(IATYPE_NA, &optinfo->iana_list, ifp,
+ 		    &optinfo->serverID, ev->authparam);
+ 	}
+-	// trigger radvd to get the latest prefix.
+-	system("/etc/init.d/radvd restart");
++	if (1 == rtnVal) {
++		// Pass real time information to radvd.
++		system("/etc/init.d/radvd restart &");
++	}
+ 
+ #ifdef CLIENT_DECLINE_SUPPORT
+ 	if (ev->state == DHCP6S_DECLINE) {
+--- a/prefixconf.c
++++ b/prefixconf.c
+@@ -133,6 +133,7 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 	int spcreate = 0;
+ 	struct timeval timo;
+ 	char str[200];
++	int rtnVal=0;
+ 	/*
+ 	 * A client discards any addresses for which the preferred
+          * lifetime is greater than the valid lifetime.
+@@ -147,12 +148,9 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 		    pinfo->pltime, pinfo->vltime);
+ 		return (-1);
+ 	}
+-	snprintf(str, sizeof(str), "uci set radvd.prefix.AdvPreferredLifetime=%lu",pinfo->pltime);
+-	system(str);
+-	snprintf(str, sizeof(str), "uci set radvd.prefix.AdvValidLifetime=%lu",pinfo->vltime);
+-	system(str);
+-	snprintf(str, sizeof(str), "uci commit radvd");
+-	system(str);
++	snprintf(str, sizeof(str), "uci set radvd.prefix.AdvPreferredLifetime=%lu",pinfo->pltime);system(str);
++	snprintf(str, sizeof(str), "uci set radvd.prefix.AdvValidLifetime=%lu",pinfo->vltime);system(str);
++	snprintf(str, sizeof(str), "uci commit radvd");system(str);
+ 
+ 	if (iac_pd == NULL) {
+ 		if ((iac_pd = malloc(sizeof(*iac_pd))) == NULL) {
+@@ -226,7 +224,7 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 				snprintf(str, sizeof(str), "ifconfig %s |grep Global |awk '{print $3}' |xargs ip -6 addr change dev %s preferred_lft 1 valid_lft 1",
+ 						pif->ifname, pif->ifname);
+ 				system(str);
+-				sleep(1);
++				sleep(1); // Waiting for this IP be expired.
+ 
+ 				add_ifprefix(sp, pinfo, pif);
+ 			}
+@@ -235,6 +233,9 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 			snprintf(str, sizeof(str), "ifconfig %s |grep Global |awk '{print $3}' |head -1 |xargs ip -6 addr change dev %s preferred_lft %lu valid_lft %lu",
+ 					pif->ifname, pif->ifname, pinfo->pltime, pinfo->vltime);
+ 			system(str);
++
++			// Need to pass real time information to radvd.
++			rtnVal = 1;
+ 		}
+ 	}
+ 
+@@ -269,7 +270,7 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 		break;
+ 	}
+ 
+-	return (0);
++	return (rtnVal);
+ }
+ 
+ static struct siteprefix *
+--- a/dhcp6c_ia.c
++++ b/dhcp6c_ia.c
+@@ -94,7 +94,7 @@ static struct dhcp6_timer *ia_timo __P((
+ static char *iastr __P((iatype_t));
+ static char *statestr __P((iastate_t));
+ 
+-void
++int
+ update_ia(iatype, ialist, ifp, serverid, authparam)
+ 	iatype_t iatype;
+ 	struct dhcp6_list *ialist;
+@@ -108,6 +108,7 @@ update_ia(iatype, ialist, ifp, serverid,
+ 	struct iana_conf *ianac;
+ 	struct dhcp6_listval *iav, *siav;
+ 	struct timeval timo;
++	int rtnVal=0;
+ 
+ 	for (iav = TAILQ_FIRST(ialist); iav; iav = TAILQ_NEXT(iav, link)) {
+ 		/* if we're not interested in this IA, ignore it. */
+@@ -156,13 +157,14 @@ update_ia(iatype, ialist, ifp, serverid,
+ 			case DHCP6_LISTVAL_PREFIX6:
+ 				/* add or update the prefix */
+ 				iapdc = (struct iapd_conf *)iac;
+-				if (update_prefix(ia, &siav->val_prefix6,
+-				    &iapdc->iapd_pif_list, ifp, &ia->ctl,
+-				    callback)) {
++				rtnVal = update_prefix(ia, &siav->val_prefix6,
++						&iapdc->iapd_pif_list, ifp, &ia->ctl,
++						callback);
++				if (rtnVal < 0) {
+ 					dprintf(LOG_NOTICE, FNAME,
+-					    "failed to update a prefix %s/%d",
+-					    in6addr2str(&siav->val_prefix6.addr, 0),
+-					    siav->val_prefix6.plen);
++						"failed to update a prefix %s/%d",
++						in6addr2str(&siav->val_prefix6.addr, 0),
++						siav->val_prefix6.plen);
+ 				}
+ 				break;
+ 			case DHCP6_LISTVAL_STATEFULADDR6:
+@@ -281,6 +283,8 @@ update_ia(iatype, ialist, ifp, serverid,
+ 	  nextia:
+ 		;
+ 	}
++
++	return rtnVal;
+ }
+ 
+ static int
+--- a/dhcp6c_ia.h
++++ b/dhcp6c_ia.h
+@@ -81,6 +81,7 @@ struct iactl {
+ 	void (*cleanup) __P((struct iactl *));
+ };
+ 
+-extern void update_ia __P((iatype_t, struct dhcp6_list *,
++
++extern int update_ia __P((iatype_t, struct dhcp6_list *,
+     struct dhcp6_if *, struct duid *, struct authparam *));
+ extern void release_all_ia __P((struct dhcp6_if *));

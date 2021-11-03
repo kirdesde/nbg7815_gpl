@@ -1,0 +1,26 @@
+menu "Zyxel Configurations"
+	config ZYXEL
+	bool "Enable Zyxel Configurations"
+	default n
+
+	config ZYXEL_FORCE_DOWNLOAD_DEFAULT
+		bool "Use download default method only"
+		depends on ZYXEL
+		default n
+		help
+		  Only use default method for downloading package.
+
+	config ZYXEL_PROJECT_NAME
+		string "Project name"
+		depends on ZYXEL
+		default "NBG7815"
+		help
+		  Project name.
+
+	config ZYXEL_PROJECT_VERSION
+		string "Project version"
+		depends on ZYXEL
+		default "V1.00(XXXX.0)B1"
+		help
+		  Project version.
+endmenu

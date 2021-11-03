@@ -1,0 +1,516 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2008-2011 OpenWrt.org
+
+START=60
+
+smb_passwd_user() {
+
+	local users=6
+	config_load proftpd		
+	config_get enable global enable
+	
+	cp  /etc/passwd /tmp/password
+	cat /tmp/password | grep "root:" > /tmp/passwd
+	cat /tmp/password | grep "daemon:" >> /tmp/passwd
+	cat /tmp/password | grep "ftp:" >> /tmp/passwd
+	cat /tmp/password | grep "network:" >> /tmp/passwd
+	cat /tmp/password | grep "nobody:" >> /tmp/passwd
+
+	if [ "$enable" == "1" ]; then	
+
+		i=1
+
+		while [ $i -lt $users ];
+		do
+			config_get proftpd_enable profile${i} enable
+			[ "$proftpd_enable" = "1" ] || {
+				i=$(($i + 1))
+				continue;
+			}
+					
+			config_get proftpd_name profile${i} name
+
+			cat /tmp/password | grep ":$proftpd_name:/var:/bin/ash" >> /tmp/passwd		
+							
+			i=$(($i + 1))
+		done
+		
+	fi
+
+	config_load config_load system
+	config_get use_usb1 general use_usb1
+	config_get use_usb2 general use_usb2	
+	
+}
+
+smb_set_user() {
+
+	local users=6
+	
+	smb_passwd_user
+	
+	cat /tmp/passwd > /etc/passwd	
+	
+	rm /etc/samba/smbpasswd
+	touch /etc/samba/smbpasswd
+	
+	i=1
+	uid=1000
+	while [ $i -lt $users ];
+	do
+		config_load system
+		config_get samba_enable samba_user_${i} enable
+		config_get samba_name samba_user_${i} name
+		config_get samba_passwd samba_user_${i} passwd
+		
+		[ "$samba_enable" = "1" ] || {
+			i=$(($i + 1))
+			continue;
+		}
+		
+		k="0"
+		config_load proftpd
+		config_get enable global enable
+
+		if [ "$enable" == "1" ]; then		
+			j=1
+			while [ $j -lt $users ];
+			do		
+				config_get proftpd_enable profile${j} enable
+				config_get proftpd_name profile${j} name			
+				[ "$proftpd_enable" == "1" ] || {
+						j=$(($j + 1))
+						continue;
+				}
+				
+				if [ "$samba_name" == "$proftpd_name" ];then
+				
+					while read line
+					do
+					
+						account=$(echo $line | grep "$proftpd_name" | awk -F ":" '{print $1}')
+
+						if [ "$account" != "" ];then
+							k="1"
+							break
+						fi
+						
+						k="0"
+												
+					done < /etc/passwd
+					
+				else
+					k="0"
+				fi
+				
+				if [ "$k" == "1" ];then
+					break
+				fi
+
+				j=$(($j + 1))						
+			done		
+		fi	
+	
+		if [ "$k" == "0" ];then
+			echo "$samba_name:*:$uid:1000:$samba_name:/var:/bin/ash" >> /etc/passwd
+			uid=$(($uid + 1))
+		fi		
+		
+		/usr/sbin/smbpasswd $samba_name $samba_passwd 
+			
+		i=$(($i + 1))
+		
+    done
+	
+}
+
+smb_share_usb() {
+
+	local check
+
+	config_load system
+	config_get usb1_types general usb1_types
+	config_get usb2_types general usb2_types
+	config_get use_usb1 general use_usb1
+	config_get use_usb2 general use_usb2
+	
+	config_load samba
+	config_get samba_name general name
+	config_get samba_workgroup general workgroup
+	config_get samba_description general description
+	
+	
+	types1=yes
+	types2=yes
+	
+	[ "$usb1_types" == "1" ] && {
+		types1=no
+	}	
+
+	[ "$usb2_types" == "1" ] && {
+		types2=no
+	}	
+
+	echo "	" >> /tmp/samba
+
+	sleep 1
+
+	if [ -d "/tmp/storage/usb1" ];then
+	
+			DIR_usb1="/tmp/storage/usb1"
+
+			check=0
+			for usb1_f in $(ls $DIR_usb1)
+			do
+				check=$(($check + 1))
+			done
+						
+			
+			i=1
+			for usb1_f in $(ls $DIR_usb1)
+			do
+			
+				if [ "$check" -lt "2" ];then
+					usb=usb1
+					name=USB1
+					path=$DIR_usb1/"$usb1_f"
+
+				else
+					usb=usb1_"$i"
+					name=USB1-"$i"
+					path=$DIR_usb1/"$usb1_f"
+
+				fi
+				
+				echo "config 'sambashare' '$usb'" >> /tmp/samba
+				echo "	option 'name' '$name'" >> /tmp/samba
+				echo "	option 'path' '$path'" >> /tmp/samba
+				echo "	option 'read_only' '$types1'" >> /tmp/samba
+				echo "	option 'create_mask' '0777'" >> /tmp/samba
+				echo "	option 'dir_mask' '0777'" >> /tmp/samba
+				
+				if [ "$use_usb1" == "" ] && [ "$use_usb2" == "" ];then
+				
+					echo "	option 'guest_ok' 'yes'" >> /tmp/samba				
+					
+				else
+				
+					echo "	option 'guest_ok' 'no'" >> /tmp/samba
+					
+					if [ "$use_usb1" != "" ];then
+						echo "	option 'users' '$use_usb1'" >> /tmp/samba
+					else
+						echo "	option 'users' 'Z_#y1X^E+L9$'" >> /tmp/samba
+					fi
+					
+				fi
+				
+				echo "	" >> /tmp/samba
+				
+				i=$(($i + 1))
+			done
+			
+	else
+				echo "config 'sambashare' 'usb1'" >> /tmp/samba
+				echo "	option 'name' 'USB1'" >> /tmp/samba
+				echo "	option 'read_only' '$types1'" >> /tmp/samba
+				echo "	option 'create_mask' '0777'" >> /tmp/samba
+				echo "	option 'dir_mask' '0777'" >> /tmp/samba
+				echo "	option 'path' ' '" >> /tmp/samba				
+				
+				if [ "$use_usb1" == "" ] && [ "$use_usb2" == "" ];then
+				
+					echo "	option 'guest_ok' 'yes'" >> /tmp/samba				
+					
+				else
+				
+					echo "	option 'guest_ok' 'no'" >> /tmp/samba
+					
+					if [ "$use_usb1" != "" ];then
+						echo "	option 'users' '$use_usb1'" >> /tmp/samba
+					else
+						echo "	option 'users' 'Z_#y1X^E+L9$'" >> /tmp/samba
+					fi
+					
+				fi
+
+				echo "	" >> /tmp/samba
+						
+	fi			
+
+	
+	if [ -d "/tmp/storage/usb2" ];then
+	
+			DIR_usb2="/tmp/storage/usb2"
+
+			check=0
+			for usb2_f in $(ls $DIR_usb2)
+			do
+				check=$(($check + 1))
+			done
+						
+			
+			i=1
+			for usb2_f in $(ls $DIR_usb2)
+			do
+			
+				if [ "$check" -lt "2" ];then
+					usb=usb2
+					name=USB2
+					path=$DIR_usb2/"$usb2_f"
+
+				else
+					usb=usb2_"$i"
+					name=USB2-"$i"
+					path=$DIR_usb2/"$usb2_f"				
+
+				fi
+				
+				echo "config 'sambashare' '$usb'" >> /tmp/samba
+				echo "	option 'name' '$name'" >> /tmp/samba
+				echo "	option 'path' '$path'" >> /tmp/samba
+				echo "	option 'read_only' '$types2'" >> /tmp/samba
+				echo "	option 'create_mask' '0777'" >> /tmp/samba
+				echo "	option 'dir_mask' '0777'" >> /tmp/samba
+				
+				if [ "$use_usb1" == "" ] && [ "$use_usb2" == "" ];then
+				
+					echo "	option 'guest_ok' 'yes'" >> /tmp/samba				
+					
+				else
+				
+					echo "	option 'guest_ok' 'no'" >> /tmp/samba
+					
+					if [ "$use_usb2" != "" ];then
+						echo "	option 'users' '$use_usb2'" >> /tmp/samba
+					else
+						echo "	option 'users' 'Z_#y1X^E+L9$'" >> /tmp/samba
+					fi					
+					
+				fi
+				
+				echo "	" >> /tmp/samba
+				
+				i=$(($i + 1))
+			done
+			
+	else
+				echo "config 'sambashare' 'usb2'" >> /tmp/samba
+				echo "	option 'name' 'USB2'" >> /tmp/samba
+				echo "	option 'read_only' '$types2'" >> /tmp/samba
+				echo "	option 'create_mask' '0777'" >> /tmp/samba
+				echo "	option 'dir_mask' '0777'" >> /tmp/samba
+				echo "	option 'path' ' '" >> /tmp/samba
+				
+				if [ "$use_usb1" == "" ] && [ "$use_usb2" == "" ];then
+				
+					echo "	option 'guest_ok' 'yes'" >> /tmp/samba				
+					
+				else
+				
+					echo "	option 'guest_ok' 'no'" >> /tmp/samba					
+
+					if [ "$use_usb2" != "" ];then
+						echo "	option 'users' '$use_usb2'" >> /tmp/samba
+					else
+						echo "	option 'users' 'Z_#y1X^E+L9$'" >> /tmp/samba
+					fi
+					
+				fi					
+				
+				echo "	" >> /tmp/samba
+						
+	fi
+
+	echo "config 'samba' 'general'" >> /tmp/samba
+	echo "	option 'name' '$samba_name'" >> /tmp/samba
+	echo "	option 'workgroup' '$samba_workgroup'" >> /tmp/samba
+	echo "	option 'description' '$samba_description'" >> /tmp/samba
+	echo "	option 'charset' 'UTF-8'" >> /tmp/samba	
+	
+	cat /tmp/samba > /etc/config/samba
+	rm /tmp/samba
+
+}
+
+
+smb_header() {
+	local interface
+	config_get interface $1 interface "loopback lan"
+
+	# resolve interfaces
+	local interfaces=$(
+		include /lib/network
+		scan_interfaces
+
+		local net
+		for net in $interface; do
+			local ifname
+			config_get ifname "$net" ifname
+			[ -n "$ifname" ] && {
+				local ipaddr netmask
+				config_get ipaddr  "$net" ipaddr
+				config_get netmask "$net" netmask
+				[ -n "$ipaddr" ] && echo -n "$ipaddr/${netmask:-255.255.255.255} "
+
+				local ip6addr
+				config_get ip6addr "$net" ip6addr
+				[ -n "$ip6addr" ] && echo -n "$ip6addr "
+			}
+
+			echo -n "${ifname:-$net} "
+		done
+	)
+
+	local name workgroup description charset 
+	local hostname="$(uci_get system.@system[0].hostname)"
+
+	config_get name        $1 name        "${hostname:-OpenWrt}"
+	config_get workgroup   $1 workgroup   "${hostname:-OpenWrt}"
+	config_get description $1 description "Samba on ${hostname:-OpenWrt}"
+	config_get charset     $1 charset     "UTF-8"
+	
+	use_usb1=$(uci_get system general use_usb1)
+	use_usb2=$(uci_get system general use_usb2)
+
+	if [ "$use_usb1" == "" ]  && [ "$use_usb2" == "" ];then		
+		type="share"
+	else
+		type="user"				
+	fi	
+	
+	mkdir -p /var/etc
+	sed -e "s#|NAME|#$name#g" \
+	    -e "s#|WORKGROUP|#$workgroup#g" \
+	    -e "s#|DESCRIPTION|#$description#g" \
+	    -e "s#|INTERFACES|#$interfaces#g" \
+	    -e "s#|CHARSET|#$charset#g" \
+	    -e "s#|TYPE|#$type#g" \
+	    /etc/samba/smb.conf.template > /var/etc/smb.conf
+
+	local homes
+	
+	config_get_bool homes $1 homes 0
+	
+	[ $homes -gt 0 ] && {
+		cat <<EOT >> /var/etc/smb.conf
+
+[homes]
+	comment     = Home Directories
+	browsable   = no
+	read only   = no
+	create mode = 0750
+EOT
+	}
+
+	[ -L /etc/samba/smb.conf ] || ln -nsf /var/etc/smb.conf /etc/samba/smb.conf
+}
+
+smb_add_share() {
+	local name
+	local path
+	local users
+	local read_only
+	local guest_ok
+	local create_mask
+	local dir_mask
+
+	config_get name $1 name
+	config_get path $1 path
+	config_get users $1 users
+	config_get read_only $1 read_only
+	config_get guest_ok $1 guest_ok
+	config_get create_mask $1 create_mask
+	config_get dir_mask $1 dir_mask
+
+	[ -z "$name" -o -z "$path" ] && return
+	
+	[ "$path" = " " ] && return
+
+	echo -e "\n[$name]\n\tpath = $path" >> /var/etc/smb.conf
+	
+        if [ "$type" == "user" ];then
+        
+           [ -n "$users" ] && echo -e "\tvalid users = $users" >> /var/etc/smb.conf
+                  
+        fi
+                          	
+	[ -n "$read_only" ] && echo -e "\tread only = $read_only" >> /var/etc/smb.conf
+	[ -n "$guest_ok" ] && echo -e "\tguest ok = $guest_ok" >> /var/etc/smb.conf
+	[ -n "$create_mask" ] && echo -e "\tcreate mask = $create_mask" >> /var/etc/smb.conf
+	[ -n "$dir_mask" ] && echo -e "\tdirectory mask = $dir_mask" >> /var/etc/smb.conf
+}
+
+start() {
+
+	local nobody_value
+	local daemon_value
+	local network_value
+	local ftp_value	
+
+	config_load proftpd		
+	config_get proftpd_enable global enable
+	
+	if [ "$proftpd_enable" == "1" ]; then
+		sleep 2
+	fi	
+
+	config_load system
+	config_get enable general enable	
+
+	if [ "$enable" == "1" ]; then
+
+		smb_set_user	
+		smb_share_usb
+
+		config_load samba
+		config_foreach smb_header samba
+		config_foreach smb_add_share sambashare
+
+		/usr/sbin/nmbd -D
+		/usr/sbin/smbd -D		
+		
+	else
+		
+		smb_passwd_user
+
+		rm /etc/samba/smbpasswd
+		touch /etc/samba/smbpasswd
+
+		cat /tmp/passwd > /etc/passwd	
+		
+	fi	
+
+	nobody_value=$(cat /etc/passwd | grep ":nobody:/var:/bin/false")	
+	if [ "$nobody_value" == "" ]; then
+		echo "nobody:*:65534:65534:nobody:/var:/bin/false" >> /etc/passwd			
+	fi		
+	
+	ftp_value=$(cat /etc/passwd | grep ":ftp:/home/ftp:/bin/false")	
+	if [ "$ftp_value" == "" ]; then
+		echo "ftp:*:55:55:ftp:/home/ftp:/bin/false" >> /etc/passwd
+	fi	
+
+	network_value=$(cat /etc/passwd | grep ":network:/var:/bin/false")	
+	if [ "$network_value" == "" ]; then
+		echo "network:*:101:101:network:/var:/bin/false" >> /etc/passwd
+	fi	
+
+	daemon_value=$(cat /etc/passwd | grep ":daemon:/var:/bin/false")	
+	if [ "$daemon_value" == "" ]; then
+		echo "daemon:*:1:1:daemon:/var:/bin/false" >> /etc/passwd
+	fi	
+	
+	/etc/init.d/password start
+	
+	rm /tmp/password
+	rm /tmp/passwd
+
+	echo "1" > /tmp/initial_samba
+	
+}
+
+stop() {
+	killall smbd
+	killall nmbd
+}

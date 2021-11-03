@@ -1,0 +1,16 @@
+. /etc/functions.sh
+include /lib/config
+
+#get some info from config file
+op_staticIP=$(uci_get dhcp lan staticIP )
+
+#get separate staticIP resource
+op=$op_staticIP';'
+if [ "$op_staticIP" != "" ]; then
+	echo $op_staticIP > /etc/ethers
+	$(sed -i 's/;/\n/g' /etc/ethers) 
+	
+else
+	rm /etc/ethers
+	touch /etc/ethers
+fi

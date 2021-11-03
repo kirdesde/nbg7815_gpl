@@ -1,0 +1,16 @@
+--- a/send.c	2016-01-13 13:33:41.749048600 +0800
++++ b/send.c	2016-01-13 17:01:43.009550066 +0800
+@@ -247,6 +247,13 @@
+ 		//return 0; // wanip EXIST.
+ 	}
+ 
++	/*
++	 *Kerker add 2016/01/13
++	 *Set ralt zero when no default route
++	 */
++	if(system("ip -6 route|grep default")!=0){
++		return 1;
++	}
+ 	//wan interface is up, v6 IP is exist, wan link is 1
+ 	return 0;
+ 

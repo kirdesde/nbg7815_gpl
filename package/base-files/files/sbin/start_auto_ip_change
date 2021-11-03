@@ -1,0 +1,246 @@
+#!/bin/sh
+
+. /etc/functions.sh
+include /lib/config
+
+proto=$(uci_get network wan proto)
+if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+	WAN="$proto"-wan
+else
+	WAN=$(uci_get network wan ifname)
+fi
+
+lan_ip=$(ifconfig br-lan | awk '/inet addr/{print $2}' | awk -F':' '{print $2}')
+lan_mask=$(ifconfig br-lan | awk '/inet addr/{print $4}' | awk -F':' '{print $2}')
+
+wan_ip=$(ifconfig $WAN | awk '/inet addr/{print $2}' | awk -F':' '{print $2}')
+wan_mask=$(ifconfig $WAN | awk '/inet addr/{print $4}' | awk -F':' '{print $2}')
+
+guest_ip=$(ifconfig br-guest | awk '/inet addr/{print $2}' | awk -F':' '{print $2}')
+guest_mask=$(ifconfig br-guest | awk '/inet addr/{print $4}' | awk -F':' '{print $2}')
+
+visitor_ip=$(ifconfig br-visitor | awk '/inet addr/{print $2}' | awk -F':' '{print $2}')
+visitor_mask=$(ifconfig br-visitor | awk '/inet addr/{print $4}' | awk -F':' '{print $2}')
+visitor_network_feature=$(wifisys_tool -g 1 -f 2)
+
+[ -z "$wan_ip" ] && exit 0
+
+conflict_lan=true
+conflict_guest=true
+conflict_visitor=true
+
+## byte1
+lan_ip_byte1=$(echo $lan_ip | awk -F'.' '{print $1}')
+lan_mask_byte1=$(echo $lan_mask | awk -F'.' '{print $1}')
+
+guest_ip_byte1=$(echo $guest_ip | awk -F'.' '{print $1}')
+guest_mask_byte1=$(echo $guest_mask | awk -F'.' '{print $1}')
+
+visitor_ip_byte1=$(echo $visitor_ip | awk -F'.' '{print $1}')
+visitor_mask_byte1=$(echo $visitor_mask | awk -F'.' '{print $1}')
+
+wan_ip_byte1=$(echo $wan_ip | awk -F'.' '{print $1}')
+wan_mask_byte1=$(echo $wan_mask | awk -F'.' '{print $1}')
+
+if [ "$((lan_ip_byte1&lan_mask_byte1))" != "$((wan_ip_byte1&wan_mask_byte1))" ]; then
+	conflict_lan=false
+fi
+
+if [ "$((guest_ip_byte1&guest_mask_byte1))" != "$((wan_ip_byte1&wan_mask_byte1))" ]; then
+	conflict_guest=false
+fi
+
+if [ "$((visitor_ip_byte1&visitor_mask_byte1))" != "$((wan_ip_byte1&wan_mask_byte1))" ]; then
+	conflict_visitor=false
+fi
+
+## byte2
+lan_ip_byte2=$(echo $lan_ip | awk -F'.' '{print $2}')
+lan_mask_byte2=$(echo $lan_mask | awk -F'.' '{print $2}')
+
+wan_ip_byte2=$(echo $wan_ip | awk -F'.' '{print $2}')
+wan_mask_byte2=$(echo $wan_mask | awk -F'.' '{print $2}')
+
+guest_ip_byte2=$(echo $guest_ip | awk -F'.' '{print $2}')
+guest_mask_byte2=$(echo $guest_mask | awk -F'.' '{print $2}')
+
+visitor_ip_byte2=$(echo $visitor_ip | awk -F'.' '{print $2}')
+visitor_mask_byte2=$(echo $visitor_mask | awk -F'.' '{print $2}')
+
+if [ "$((lan_ip_byte2&lan_mask_byte2))" != "$((wan_ip_byte2&wan_mask_byte2))" ]; then
+	conflict_lan=false
+fi
+
+if [ "$((guest_ip_byte2&guest_mask_byte2))" != "$((wan_ip_byte2&wan_mask_byte2))" ]; then
+	conflict_guest=false
+fi
+
+if [ "$((visitor_ip_byte2&visitor_mask_byte2))" != "$((wan_ip_byte2&wan_mask_byte2))" ]; then
+	conflict_visitor=false
+fi
+
+## byte3
+lan_ip_byte3=$(echo $lan_ip | awk -F'.' '{print $3}')
+lan_mask_byte3=$(echo $lan_mask | awk -F'.' '{print $3}')
+
+wan_ip_byte3=$(echo $wan_ip | awk -F'.' '{print $3}')
+wan_mask_byte3=$(echo $wan_mask | awk -F'.' '{print $3}')
+
+guest_ip_byte3=$(echo $guest_ip | awk -F'.' '{print $3}')
+guest_mask_byte3=$(echo $guest_mask | awk -F'.' '{print $3}')
+
+visitor_ip_byte3=$(echo $visitor_ip | awk -F'.' '{print $3}')
+visitor_mask_byte3=$(echo $visitor_mask | awk -F'.' '{print $3}')
+
+if [ "$((lan_ip_byte3&lan_mask_byte3))" != "$((wan_ip_byte3&wan_mask_byte3))" ]; then
+	conflict_lan=false
+fi
+
+if [ "$((guest_ip_byte3&guest_mask_byte3))" != "$((wan_ip_byte3&wan_mask_byte3))" ]; then
+	conflict_guest=false
+fi
+
+if [ "$((visitor_ip_byte3&visitor_mask_byte3))" != "$((wan_ip_byte3&wan_mask_byte3))" ]; then
+	conflict_visitor=false
+fi
+
+## byte4
+lan_ip_byte4=$(echo $lan_ip | awk -F'.' '{print $4}')
+lan_mask_byte4=$(echo $lan_mask | awk -F'.' '{print $4}')
+
+wan_ip_byte4=$(echo $wan_ip | awk -F'.' '{print $4}')
+wan_mask_byte4=$(echo $wan_mask | awk -F'.' '{print $4}')
+
+guest_ip_byte4=$(echo $guest_ip | awk -F'.' '{print $4}')
+guest_mask_byte4=$(echo $guest_mask | awk -F'.' '{print $4}')
+
+visitor_ip_byte4=$(echo $visitor_ip | awk -F'.' '{print $4}')
+visitor_mask_byte4=$(echo $visitor_mask | awk -F'.' '{print $4}')
+
+if [ "$((lan_ip_byte4&lan_mask_byte4))" != "$((wan_ip_byte4&wan_mask_byte4))" ]; then
+	conflict_lan=false
+fi
+
+if [ "$((guest_ip_byte4&guest_mask_byte4))" != "$((wan_ip_byte4&wan_mask_byte4))" ]; then
+	conflict_guest=false
+fi
+
+if [ "$((visitor_ip_byte4&visitor_mask_byte4))" != "$((wan_ip_byte4&wan_mask_byte4))" ]; then
+	conflict_visitor=false
+fi
+
+## check br-lan subnet
+lan_subnet=$((lan_ip_byte1&lan_mask_byte1)).$((lan_ip_byte2&lan_mask_byte2)).$((lan_ip_byte3&lan_mask_byte3)).$((lan_ip_byte4&lan_mask_byte4))
+guest_subnet=$((guest_ip_byte1&guest_mask_byte1)).$((guest_ip_byte2&guest_mask_byte2)).$((guest_ip_byte3&guest_mask_byte3)).$((guest_ip_byte4&guest_mask_byte4))
+visitor_subnet=$((visitor_ip_byte1&visitor_mask_byte1)).$((visitor_ip_byte2&visitor_mask_byte2)).$((visitor_ip_byte3&visitor_mask_byte3)).$((visitor_ip_byte4&visitor_mask_byte4))
+boot_sequence=$(cat /tmp/bootflag)
+
+if [ "$conflict_lan" == "true" ] || [ "$conflict_guest" == "true" ] || [ "$conflict_visitor" == "true" -a "$visitor_network_feature" == "2" ]; then
+
+	## Assume that WAN network can only be similar to EITHER Main LAN OR Guest LAN OR Visitor LAN,
+	## Only change the conflicting network and revert the non-conflicting network
+	if [ "$conflict_lan" == "true" ]; then
+		if [ "$lan_subnet" == "10.0.0.0" ]; then
+			uci set network.lan.ipaddr=192.168.123.1
+			uci set network.guest.ipaddr=192.168.141.1
+			uci set network.visitor.ipaddr=192.168.142.1
+			uci commit network
+			sync #This command is for emmc and ext4 filesystem
+
+			## to prevent rt5392 from being fail to intialize
+			#ifconfig br-lan 192.168.123.1
+		else
+			uci set network.lan.ipaddr=10.0.0.1
+			uci set network.guest.ipaddr=192.168.141.1
+			uci set network.visitor.ipaddr=192.168.142.1
+			uci commit network
+			sync #This command is for emmc and ext4 filesystem
+
+			## to prevent rt5392 from being fail to intialize
+			#netmasks=$(uci get network.lan.netmask)
+			#ifconfig br-lan 10.0.0.1 netmask $guest_mask
+		fi
+	fi
+
+	if [ "$conflict_guest" == "true" ]; then
+		if [ "$guest_subnet" == "10.0.141.0" ]; then
+			uci set network.lan.ipaddr=192.168.123.1
+			uci set network.guest.ipaddr=192.168.141.1
+			uci set network.visitor.ipaddr=192.168.142.1
+			uci commit network
+			sync #This command is for emmc and ext4 filesystem
+
+			## to prevent rt5392 from being fail to intialize
+			#ifconfig br-guest 192.168.141.1
+		else
+			uci set network.lan.ipaddr=192.168.123.1
+			uci set network.guest.ipaddr=10.0.141.1
+			uci set network.visitor.ipaddr=192.168.142.1
+			uci commit network
+			sync #This command is for emmc and ext4 filesystem
+
+			## to prevent rt5392 from being fail to intialize
+			#netmasks=$(uci get network.lan.netmask)
+			#ifconfig br-lan 10.0.141.1 netmask $netmasks
+		fi
+	fi
+
+	if [ "$visitor_network_feature" == "2" ] && [ "$conflict_visitor" == "true" ]; then
+		if [ "$visitor_subnet" == "10.0.142.0" ]; then
+			uci set network.lan.ipaddr=192.168.123.1
+			uci set network.guest.ipaddr=192.168.141.1
+			uci set network.visitor.ipaddr=192.168.142.1
+			uci commit network
+			sync #This command is for emmc and ext4 filesystem
+
+			## to prevent rt5392 from being fail to intialize
+			#ifconfig br-guest 192.168.141.1
+		else
+			uci set network.lan.ipaddr=192.168.123.1
+			uci set network.guest.ipaddr=192.168.141.1
+			uci set network.visitor.ipaddr=10.0.142.1
+			uci commit network
+			sync #This command is for emmc and ext4 filesystem
+
+			## to prevent rt5392 from being fail to intialize
+			#netmasks=$(uci get network.lan.netmask)
+			#ifconfig br-lan 10.0.141.1 netmask $netmasks
+		fi
+	fi
+
+	/etc/init.d/network reload
+
+else
+	checkDNS=false
+	lan_three_ip=$( echo $lan_ip | awk -F'.' '{print $1"."$2"."$3}' )
+
+	while read line
+	do
+
+	check_dns_ip=$(echo $line | awk '{print $2}' | awk -F'.' '{print $1"."$2"."$3}')
+	if [ "$check_dns_ip" == "$lan_three_ip" ]; then
+		checkDNS=true
+		break
+	fi
+
+	done < /tmp/resolv.conf.auto
+
+	if [ "$checkDNS" == "true" ]; then
+
+		if [ "$lan_three_ip" == "192.168.123" ]; then
+			uci set network.lan.ipaddr=10.0.0.1
+			uci commit network
+			sync #This command is for emmc and ext4 filesystem
+		else
+			uci set network.lan.ipaddr=192.168.123.1
+			uci commit network
+			sync #This command is for emmc and ext4 filesystem
+		fi
+
+		touch /tmp/changeLanIP
+		sleep 3
+		/etc/init.d/network reload
+
+	fi
+
+fi

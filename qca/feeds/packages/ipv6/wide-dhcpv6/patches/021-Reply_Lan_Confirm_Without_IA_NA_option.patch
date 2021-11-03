@@ -1,0 +1,22 @@
+--- a/dhcp6s.c
++++ b/dhcp6s.c
+@@ -2273,8 +2273,9 @@
+ 	 * even when the given address seems to be on the appropriate link,
+ 	 * the confirm should be ignore if there's no corrensponding IA-NA
+ 	 * configuration.
++	 * 2016/01/19 Kerker reply confirm should not contain IANA option
+ 	 */
+-	for (iana = TAILQ_FIRST(&optinfo->iana_list); iana;
++/*	for (iana = TAILQ_FIRST(&optinfo->iana_list); iana;
+ 	    iana = TAILQ_NEXT(iana, link)) {
+ 		if (make_ia(iana, &conflist, &roptinfo.iana_list,
+ 		    client_conf, 1) == 0) {
+@@ -2282,7 +2283,7 @@
+ 			    "IA-NA configuration not found");
+ 			goto fail;
+ 		}
+-	}
++	}*/
+ 
+ send_reply:
+ 	if (dhcp6_add_listval(&roptinfo.stcode_list,

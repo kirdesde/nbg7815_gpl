@@ -1,0 +1,234 @@
+#!/bin/sh
+
+# Backdoor APP All-Purpose Variables
+TMP_DIR="/tmp"
+LIST_FILE=".files"
+PUBLIC_KEY="/etc/back_pub.key"
+LOG_FILE=$TMP_DIR/wsq/usb-app
+EXT_FW_PATH=$TMP_DIR/wsq/FWFile
+
+# Backdoor APP Specific-Purpose Variables
+FWU_SIGN_FILE_BIN="signature.sha512"
+EXT_FWU_SIGN_FILE_BIN="ext_signature.sha512"
+FWU_STATE="/tmp/FWupgrade_state"
+SCR_SIGN_FILE_BIN="scr_sign.sha512"
+
+script_execution(){
+	## Begin of 3rd party script execution flow
+	local script_file=$(cat $1/$LIST_FILE | grep 'script_file' | awk -F= '{print $2}' | tr -d "\n")
+	local script_sign_file=$(cat $1/$LIST_FILE | grep 'script_sign_file' | awk -F= '{print $2}' | tr -d "\n")
+	
+	if [ -z "$script_file" ] || [ -z "$script_sign_file" ]; then
+		return
+	fi
+	
+	if [ ! -f "$1/$script_file" ] || [ ! -f "$1/$script_sign_file" ]; then
+		logger -t backdoor -p user.debug "Third party script and/or its signature files are not found!"
+		return
+	fi
+	
+	logger -t backdoor -p user.debug "Third party script and/or its signature files are found!"
+	
+	cp "$1/$script_file" $TMP_DIR/
+	cp "$1/$script_sign_file" $TMP_DIR/
+	
+	## First Verification
+	openssl base64 -d -in "$TMP_DIR/$script_sign_file" -out $TMP_DIR/$SCR_SIGN_FILE_BIN
+	local verify_status=$(openssl dgst -sha512 -verify $PUBLIC_KEY -signature $TMP_DIR/$SCR_SIGN_FILE_BIN "$TMP_DIR/$script_file" | grep OK)
+
+	[ ! -n "$verify_status" ] && {
+		logger -t backdoor -p user.debug "Script cannot be verified."
+		rm "$TMP_DIR/$script_file"
+		rm "$TMP_DIR/$script_sign_file"
+		rm $TMP_DIR/$SCR_SIGN_FILE_BIN
+		return
+	}
+	logger -t backdoor -p user.debug "First verification is completed"
+	
+	## Second Verification
+	local LM=$(ifconfig br-lan | grep HWaddr | awk '{print $5}' | sed s/://g | tr '[A-Z]' '[a-z]')
+	local LM_2=$(cat $TMP_DIR/$script_file | grep LANMAC | awk -F= '{print $2}' | tr '[A-Z]' '[a-z]')
+	if [ -z "$LM_2" ] || [ "$LM" != "$LM_2" ]; then
+		logger -t backdoor -p user.debug "Script cannot be verified."
+		rm "$TMP_DIR/$script_file"
+		rm "$TMP_DIR/$script_sign_file"
+		rm $TMP_DIR/$SCR_SIGN_FILE_BIN
+		return
+	fi
+	
+	logger -t backdoor -p user.debug "Second verification is completed. Execute script"
+	
+	rm "$TMP_DIR/$script_sign_file"
+	rm $TMP_DIR/$SCR_SIGN_FILE_BIN
+	chmod +x "$TMP_DIR/$script_file"
+	$TMP_DIR/$script_file
+	rm "$TMP_DIR/$script_file"
+	
+	## End of 3rd party script execution flow
+}
+
+extender_firmware_upgrade(){
+	## Begin of Extender Firmware Store Flow
+	local ext_model=$(cat $1/$LIST_FILE | grep 'ext_model_name' | awk -F= '{print $2}' | tr -d "\n")
+	local ext_fwu_file=$(cat $1/$LIST_FILE | grep 'ext_fw1_file' | awk -F= '{print $2}' | tr -d "\n")
+	local ext_fwu_version=$(cat $1/$LIST_FILE | grep 'ext_fw1_version' | awk -F= '{print $2}' | tr -d "\n")
+	local ext_fwu_sign_file=$(cat $1/$LIST_FILE | grep 'ext_fw1_sign_file' | awk -F= '{print $2}' | tr -d "\n")
+	local ext_fwu_md5=$(cat $1/$LIST_FILE | grep 'ext_fw1_md5' | awk -F= '{print $2}' | tr -d "\n")
+	local fwu_test_mode=$(cat $1/$LIST_FILE | grep 'fw_test_mode' | awk -F= '{print $2}' | tr -d "\n")
+	local ext_info_file="/tmp/ApplicationData/FWFile/fw_info_$ext_model"
+	local current_device_model=$(firmware_info | awk '/Project/{print $3}')
+
+	if [ -z "$ext_fwu_file" ] || [ -z "$ext_fwu_version" ] || [ -z "$ext_fwu_sign_file" ] || [ -z "$ext_fwu_md5" ] || [ -z "$fwu_test_mode" ]; then
+		return
+	fi
+
+	if [ ! -f "$1/$ext_fwu_file" ] || [ ! -f "$1/$ext_fwu_sign_file" ]; then
+		logger -t backdoor -p user.debug "Extender firmware and/or its signature files are not found!"
+		return
+	fi
+
+	if [ $current_device_model == $ext_model ]; then
+		logger -t backdoor -p user.debug "Current device and the extender model name are the same!"
+		return
+	fi
+
+	logger -t backdoor -p user.debug "Extender firmware and its signature files are found!"
+
+	cp "$1/$ext_fwu_file" $TMP_DIR/
+	cp "$1/$ext_fwu_sign_file" $TMP_DIR/
+
+	openssl base64 -d -in "$TMP_DIR/$ext_fwu_sign_file" -out $TMP_DIR/$EXT_FWU_SIGN_FILE_BIN
+	local verify_status=$(openssl dgst -sha512 -verify $PUBLIC_KEY -signature $TMP_DIR/$EXT_FWU_SIGN_FILE_BIN "$TMP_DIR/$ext_fwu_file" | grep OK)
+
+	[ ! -n "$verify_status" ] && {
+		logger -t backdoor -p user.debug "Extender firmware cannot be verified."
+		rm "$TMP_DIR/$ext_fwu_file"
+		rm "$TMP_DIR/$ext_fwu_sign_file"
+		rm $TMP_DIR/$EXT_FWU_SIGN_FILE_BIN
+		return
+	}
+	logger -t backdoor -p user.debug "Extender firmware is verified. Store it into RootAP."
+
+	#copy extender FW to path and update information
+	rm -rf $EXT_FW_PATH/$ext_model
+	mkdir $EXT_FW_PATH/$ext_model
+	cp "$1/$ext_fwu_file" $EXT_FW_PATH/$ext_model/$ext_fwu_version.bin
+	
+	echo "ModelName=$ext_model" > $ext_info_file
+	echo "FWURL=ftp://Not_used" >> $ext_info_file
+	echo "FWchecksum=$ext_fwu_md5" >> $ext_info_file
+	echo "FWSize=14000000" >> $ext_info_file
+	echo "FWDate=2019-01-01" >> $ext_info_file
+	echo "NoteURL=" >> $ext_info_file
+	echo "FWVersion=$ext_fwu_version" >> $ext_info_file
+	echo "BuildNumber=0" >> $ext_info_file
+	echo "Version1905=1" >> $ext_info_file
+	echo "ZapiVersion=6" >> $ext_info_file
+
+	if [ -f "$LOG_FILE" ]; then 
+		sed -i '/ext_fw_version=/d' $LOG_FILE
+		sed -i '/fw_test_mode=/d' $LOG_FILE
+		echo "ext_fw_version=$ext_fwu_version" >> $LOG_FILE
+		echo "fw_test_mode=$fwu_test_mode" >> $LOG_FILE
+	else
+		echo "fw_upgrade=1" > $LOG_FILE
+		echo "fw_version=$ext_fwu_version" >> $LOG_FILE
+		echo "fw_test_mode=$fwu_test_mode" >> $LOG_FILE
+	fi
+	
+	rm "$TMP_DIR/$ext_fwu_file"
+	rm "$TMP_DIR/$ext_fwu_sign_file"
+	rm $TMP_DIR/$EXT_FWU_SIGN_FILE_BIN
+	
+	#restart zy1905 to get new extender firmware information
+	/etc/init.d/zy1905 restart
+	
+	## End of Extender Firmware Store Flow
+}
+
+firmware_upgrade(){
+	## Begin of Firmware Upgrade Flow
+	local fwu_file=$(cat $1/$LIST_FILE | grep 'fw_file' | awk -F= '{print $2}' | tr -d "\n")
+	local fwu_version=$(cat $1/$LIST_FILE | grep 'fw_version' | awk -F= '{print $2}' | tr -d "\n")
+	local fwu_sign_file=$(cat $1/$LIST_FILE | grep 'fw_sign_file' | awk -F= '{print $2}' | tr -d "\n")
+	local fwu_test_mode=$(cat $1/$LIST_FILE | grep 'fw_test_mode' | awk -F= '{print $2}' | tr -d "\n")
+
+	if [ -z "$fwu_file" ] || [ -z "$fwu_version" ] || [ -z "$fwu_sign_file" ] || [ -z "$fwu_test_mode" ]; then
+		return
+	fi
+
+	if [ ! -f "$1/$fwu_file" ] || [ ! -f "$1/$fwu_sign_file" ]; then
+		logger -t backdoor -p user.debug "Firmware and/or its signature files are not found!"
+		return
+	fi
+
+	logger -t backdoor -p user.debug "Firmware and its signature files are found!"
+
+	cp "$1/$fwu_file" $TMP_DIR/
+	cp "$1/$fwu_sign_file" $TMP_DIR/
+
+	openssl base64 -d -in "$TMP_DIR/$fwu_sign_file" -out $TMP_DIR/$FWU_SIGN_FILE_BIN
+	local verify_status=$(openssl dgst -sha512 -verify $PUBLIC_KEY -signature $TMP_DIR/$FWU_SIGN_FILE_BIN "$TMP_DIR/$fwu_file" | grep OK)
+
+	[ ! -n "$verify_status" ] && {
+		logger -t backdoor -p user.debug "Firmware cannot be verified."
+		rm "$TMP_DIR/$fwu_file"
+		rm "$TMP_DIR/$fwu_sign_file"
+		rm $TMP_DIR/$FWU_SIGN_FILE_BIN
+		return
+	}
+	logger -t backdoor -p user.debug "Firmware is verified. Execute FW_upgrade"
+
+	/bin/FW_upgrade "$TMP_DIR/$fwu_file"
+
+	counter=0
+	while [ $counter -lt 3 ]
+	do
+		sleep 3
+		[ ! -f "$FWU_STATE" ] && counter=`expr $counter + 1` || {
+			fwu_result=$(cat $FWU_STATE)
+			if [ -n "$fwu_result" ] && [ "$fwu_result" -eq "1" ]; then
+				local dev_node=$(df | grep $1 | awk '{print $1}')
+				umount $dev_node
+
+				if [ -f "$LOG_FILE" ]; then 
+					sed -i 's/fw_upgrade=0/fw_upgrade=1/' $LOG_FILE
+					sed -i '/fw_version=/d' $LOG_FILE
+					sed -i '/fw_test_mode=/d' $LOG_FILE
+					echo "fw_version=$fwu_version" >> $LOG_FILE
+					echo "fw_test_mode=$fwu_test_mode" >> $LOG_FILE
+				else
+					echo "fw_upgrade=1" > $LOG_FILE
+					echo "fw_version=$fwu_version" >> $LOG_FILE
+					echo "fw_test_mode=$fwu_test_mode" >> $LOG_FILE
+				fi
+
+				reboot -f
+			fi
+		}
+	done
+	
+	logger -t backdoor -p user.debug "FW_upgrade is failed"
+	rm "$TMP_DIR/$fwu_file"
+	rm "$TMP_DIR/$fwu_sign_file"
+	rm $TMP_DIR/$FWU_SIGN_FILE_BIN
+	
+	## End of Firmware Upgrade Flow
+}
+
+for mount_partition in $(df | grep "/tmp/storage/usb" | awk '{print $6}')
+do
+	[ ! -f "$mount_partition/$LIST_FILE" ] && continue
+
+	# Reset all action
+	if [ -f "$LOG_FILE" ]; then
+		sed -i '/fw_upgrade=/d' $LOG_FILE
+	fi
+	echo "fw_upgrade=0" >> $LOG_FILE
+
+	script_execution $mount_partition
+	
+	extender_firmware_upgrade $mount_partition
+	
+	firmware_upgrade $mount_partition
+done

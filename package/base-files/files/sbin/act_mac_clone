@@ -1,0 +1,29 @@
+#!/bin/sh
+mac_status=$(uci get network.wan.wan_mac_status)
+wan_ifname=$(uci get network.wan.ifname)
+
+cur_mac=$(ifconfig $wan_ifname | grep 'HWaddr' | awk '{print $5}')
+
+if [ "$mac_status" == "0" ] || [ -z "$mac_status" ];then
+	default_wan_mac=$(zyxel_setmac ethernet_WAN_GET)
+	if [ -n "$default_wan_mac" -a "$default_wan_mac" != "$cur_mac" ];then
+		zyxel_setmac ethernet_WAN
+	fi
+
+elif [ "$mac_status" == "1" ];then
+	clone_ip_mac=$(uci get network.wan.wan_clone_ip_mac)
+	if [ "$clone_ip_mac" != "$cur_mac" ];then
+		ifconfig $wan_ifname down
+		ifconfig $wan_ifname hw ether "$clone_ip_mac"
+		ifconfig $wan_ifname up
+	fi
+elif [ "$mac_status" == "2" ];then
+	set_mac=$(uci get network.wan.wan_set_mac)
+	if [ "$set_mac" != "$cur_mac" ];then
+		ifconfig $wan_ifname down	
+		ifconfig $wan_ifname hw ether "$set_mac"
+		ifconfig $wan_ifname up
+	fi
+fi
+
+

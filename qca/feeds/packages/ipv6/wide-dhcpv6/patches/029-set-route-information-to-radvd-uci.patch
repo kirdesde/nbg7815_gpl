@@ -1,0 +1,73 @@
+--- a/prefixconf.c
++++ b/prefixconf.c
+@@ -118,6 +118,9 @@ static int add_ifprefix __P((struct site
+ extern struct dhcp6_timer *client6_timo __P((void *));
+ static int pd_ifaddrconf __P((ifaddrconf_cmd_t, struct dhcp6_ifprefix *ifpfx));
+ 
++
++struct in6_addr g_lastPrefix;
++
+ int
+ update_prefix(ia, pinfo, pifc, dhcpifp, ctlp, callback)
+ 	struct ia *ia;
+@@ -133,7 +136,7 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 	int spcreate = 0;
+ 	struct timeval timo;
+ 	char str[200];
+-	int rtnVal=0;
++	int rtnVal = 0; // 1: Need to call radvd to reload real-time configuration.
+ 	/*
+ 	 * A client discards any addresses for which the preferred
+          * lifetime is greater than the valid lifetime.
+@@ -223,27 +226,36 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 				add_ifprefix(sp, pinfo, pif);
+ 			}
+ 
+-			if (!spcreate && pinfo->pltime==0) {
+-				// Set LAN side IP lifetimes to 1, to let old prefix expired.
+-				snprintf(str, sizeof(str), "./etc/init.d/dhcp6c_set_lifetimes_on_lan %s %s %d %d"
+-						,in6addr2str(&pinfo->addr, 0)
+-						,pif->ifname
+-						,1
+-						,1
++			/*
++			 * Set LAN global IP lifetimes.
++			 * Original wide-dhcpv6 source code only set global IP, but not lifeitmes.
++			 */
++			if (!spcreate && pinfo->pltime==0) { // Only expire the old prefix.
++				snprintf(str, sizeof(str)
++						, "./etc/init.d/dhcp6c_set_lifetimes_on_lan %s %s %d %d"
++						,in6addr2str(&g_lastPrefix, 0)
++						,pif->ifname ,1 ,1
+ 						);system(str);
+ 				sleep(1); // Waiting for this IP be expired.
+-			}else{
+-				// Set LAN side IP lifetimes from IA_PD (not include dhcpifp->ifname)
+-				snprintf(str, sizeof(str), "./etc/init.d/dhcp6c_set_lifetimes_on_lan %s %s %d %d"
++			}
++			else { // Just make a new prefix.
++				snprintf(str, sizeof(str)
++						, "./etc/init.d/dhcp6c_set_lifetimes_on_lan %s %s %d %d"
+ 						,in6addr2str(&pinfo->addr, 0)
+-						,pif->ifname
+-						,pinfo->pltime
+-						,pinfo->vltime
++						,pif->ifname ,pinfo->pltime ,pinfo->vltime
+ 						);system(str);
+ 			}
+-
+-			rtnVal = 1; // Need to pass real time information to radvd.
++			rtnVal = 1;
+ 		}
++		g_lastPrefix = pinfo->addr;
++
++		// note lastprefix to radvd.uci
++		char cmd[200]="";
++		snprintf(cmd, sizeof(cmd), "uci set radvd.route.prefix=%s/%d"
++				, in6addr2str(&g_lastPrefix, 0)
++				, pinfo->plen
++				);system(cmd);
++		snprintf(cmd, sizeof(cmd), "uci commit radvd");system(cmd);
+ 	}
+ 
+ 	/*

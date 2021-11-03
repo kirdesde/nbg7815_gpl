@@ -1,0 +1,217 @@
+#!/bin/sh
+# Copyright (C) 2006 OpenWrt.org
+
+. /etc/functions.sh
+include /lib/network
+
+config_load network
+config_get proto wan proto
+
+sys_dns1=""
+sys_dns2=""
+sys_dns3=""
+
+if [ $proto != "static" ]; then
+
+	## read dns server from /tmp/resolv.conf.auto, which are obtained from ISP
+	count=1
+	while read line
+	do
+		express=$(echo $line | grep "nameserver")
+		v4_check=$(echo $line | grep "::")
+		#echo "$line"
+		if [ "$v4_check" == "" ]; then
+			if [ "$express" != "" ]; then
+				if [ "$count" == "1" ]; then
+					sys_dns1=$(echo $express | awk -F" " '{print $2}')
+				fi
+			
+				if [ "$count" == "2" ]; then
+					sys_dns2=$(echo $express | awk -F" " '{print $2}')
+				fi
+			
+				if [ "$count" == "3" ]; then
+					sys_dns3=$(echo $express | awk -F" " '{print $2}')
+				fi
+				count=$(($count+1))
+			fi
+		fi
+
+	done < /tmp/resolv.conf.auto
+fi
+
+## Get DNSv6 from dnsmasq conf file.
+config_get v6_proto wan v6_proto
+
+sys_dnsv6_1=""
+sys_dnsv6_2=""
+sys_dnsv6_3=""
+
+if [ $v6_proto != "static" ]; then
+
+	## read dns server from /tmp/resolv.conf.auto, which are obtained from ISP
+	v6count=1
+	while read line
+	do
+		v6express=$(echo $line | grep "nameserver")
+		v6_check=$(echo $line | grep "::")
+		#echo "$line"
+		if [ "$v6_check" != "" ]; then
+			if [ "$v6express" != "" ]; then
+				if [ "$v6count" == "1" ]; then
+					sys_dnsv6_1=$(echo $v6express | awk -F" " '{print $2}')
+				fi
+			
+				if [ "$v6count" == "2" ]; then
+					sys_dnsv6_2=$(echo $v6express | awk -F" " '{print $2}')
+				fi
+			
+				if [ "$v6count" == "3" ]; then
+					sys_dnsv6_3=$(echo $v6express | awk -F" " '{print $2}')
+				fi
+			fi
+			v6count=$(($v6count+1))
+		fi
+	done < /tmp/resolv.conf.auto
+fi
+
+
+## remove old /tmp/resolv.conf.auto and lock dns check
+rm /tmp/resolv.conf.auto
+rm /var/wan_ipv4_dns
+rm /var/wan_ipv6_dns
+
+touch /tmp/resolv.conf.auto
+echo "1" > /var/update_dns_lock
+
+## read user config of DNS server
+usr_dns1=""
+usr_dns2=""
+usr_dns3=""
+
+config_get dns1 wan dns1
+usr_dns1=${dns1#*,}
+dns_type1=${dns1%%,*}
+config_get dns2 wan dns2
+usr_dns2=${dns2#*,}
+dns_type2=${dns2%%,*}
+config_get dns3 wan dns3
+usr_dns3=${dns3#*,}
+dns_type3=${dns3%%,*}
+ 
+## reload /tmp/resolv.conf.auto
+
+i=1
+for dns_type in $dns_type1 $dns_type2 $dns_type3
+do
+	if [ "$dns_type" == "ISP" ]; then
+		if [ "$sys_dns1" != "" ]; then
+			echo "nameserver $sys_dns1" >> /tmp/resolv.conf.auto
+			echo "I,$sys_dns1" >> /var/wan_ipv4_dns
+			sys_dns1=""
+		elif [ "$sys_dns2" != "" ]; then
+			echo "nameserver $sys_dns2" >> /tmp/resolv.conf.auto
+			echo "I,$sys_dns2" >> /var/wan_ipv4_dns
+			sys_dns2=""
+		elif [ "$sys_dns3" != "" ]; then
+			echo "nameserver $sys_dns3" >> /tmp/resolv.conf.auto
+			echo "I,$sys_dns3" >> /var/wan_ipv4_dns
+			sys_dns3=""
+		else
+			echo "I,0.0.0.0" >> /var/wan_ipv4_dns
+			echo "no more available dns servers !"
+		fi
+	elif [ "$dns_type" == "USER" ]; then
+		if [ "$i" == "1" ]; then
+			if [ "$usr_dns1" != "" ]; then
+				echo "nameserver $usr_dns1" >> /tmp/resolv.conf.auto
+				echo "U,$usr_dns1" >> /var/wan_ipv4_dns
+			fi
+		elif [ "$i" == "2" ]; then
+			if [ "$usr_dns2" != "" ]; then
+				echo "nameserver $usr_dns2" >> /tmp/resolv.conf.auto
+				echo "U,$usr_dns2" >> /var/wan_ipv4_dns
+			fi
+		else
+			if [ "$usr_dns3" != "" ]; then
+				echo "nameserver $usr_dns3" >> /tmp/resolv.conf.auto
+				echo "U,$usr_dns3" >> /var/wan_ipv4_dns
+			fi
+		fi
+	else
+		echo "N,0.0.0.0" >> /var/wan_ipv4_dns
+		echo "dns type is NONE, don't do anything"
+	fi
+	
+	i=$(($i+1))
+done
+
+
+## Get DNSv6 from UCI conf file, then set USER/ISP DNSv6 into dnsmasq conf file.
+usr_dnsv6_1=""
+usr_dnsv6_2=""
+usr_dnsv6_3=""
+ 
+config_get dnsv6_1 wan dnsv6_1
+usr_dnsv6_1=${dnsv6_1#*,}
+dnsv6_type1=${dnsv6_1%%,*}
+config_get dnsv6_2 wan dnsv6_2
+usr_dnsv6_2=${dnsv6_2#*,}
+dnsv6_type2=${dnsv6_2%%,*}
+config_get dnsv6_3 wan dnsv6_3
+usr_dnsv6_3=${dnsv6_3#*,}
+dnsv6_type3=${dnsv6_3%%,*}
+
+j=1
+for dnsv6_type in $dnsv6_type1 $dnsv6_type2 $dnsv6_type3
+do
+	if [ "$dnsv6_type" == "ISP" ]; then
+		if [ "$sys_dnsv6_1" != "" ]; then
+			echo "nameserver $sys_dnsv6_1" >> /tmp/resolv.conf.auto
+			echo "I,$sys_dnsv6_1" >> /var/wan_ipv6_dns
+			sys_dnsv6_1=""
+		elif [ "$sys_dnsv6_2" != "" ]; then
+			echo "nameserver $sys_dnsv6_2" >> /tmp/resolv.conf.auto
+			echo "I,$sys_dnsv6_2" >> /var/wan_ipv6_dns
+			sys_dnsv6_2=""
+		elif [ "$sys_dnsv6_3" != "" ]; then
+			echo "nameserver $sys_dnsv6_3" >> /tmp/resolv.conf.auto
+			echo "I,$sys_dnsv6_3" >> /var/wan_ipv6_dns
+			sys_dnsv6_3=""
+		else
+			echo "I,::" >> /var/wan_ipv6_dns
+			echo "no more available dns servers !"
+		fi
+	elif [ "$dnsv6_type" == "USER" ]; then
+		if [ "$j" == "1" ]; then
+			if [ "$usr_dnsv6_1" != "" ]; then
+				echo "nameserver $usr_dnsv6_1" >> /tmp/resolv.conf.auto
+				echo "U,$usr_dnsv6_1" >> /var/wan_ipv6_dns
+			fi
+		elif [ "$j" == "2" ]; then
+			if [ "$usr_dnsv6_2" != "" ]; then
+				echo "nameserver $usr_dnsv6_2" >> /tmp/resolv.conf.auto
+				echo "U,$usr_dnsv6_2" >> /var/wan_ipv6_dns
+			fi
+		else
+			if [ "$usr_dnsv6_3" != "" ]; then
+				echo "nameserver $usr_dnsv6_3" >> /tmp/resolv.conf.auto
+				echo "U,$usr_dnsv6_3" >> /var/wan_ipv6_dns
+			fi
+		fi
+	else
+		echo "N,::" >> /var/wan_ipv6_dns
+		echo "dns type is NONE, don't do anything"
+	fi
+	
+	j=$(($j+1))
+done
+
+
+chmod 755 /tmp/resolv.conf.auto
+
+## update (unlock) success notification
+echo "0" > /var/update_dns_lock
+
+
+

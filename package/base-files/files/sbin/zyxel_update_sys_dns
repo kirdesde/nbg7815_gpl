@@ -1,0 +1,13 @@
+#!/bin/sh
+
+## This script is executed by netifd (zyxel patch)
+## Temporary solution.
+## I suggest modify interface_write_resolv_conf() in netifd.
+
+sys_mode=$(get_sys_mode)
+if [ "$sys_mode" != "1" ]; then #ap mode
+	/sbin/update_sys_dns_apmode
+else
+	/sbin/update_sys_dns
+fi
+

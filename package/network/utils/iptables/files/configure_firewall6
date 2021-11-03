@@ -1,0 +1,121 @@
+#!/bin/sh
+. /etc/functions.sh
+include /lib/config
+
+filter_enable=$(uci_get firewall6 general filterEnabled)
+pingEnabled=$(uci_get firewall6 general pingEnabled)
+proto=$(uci_get network wan proto)
+security_level=$(uci_get firewall6 general security_level)
+
+#proto=`uci get network.wan.proto`
+if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+WAN="$proto"-wan
+else
+WAN=$(uci_get network wan ifname)
+fi
+
+LAN="br+"
+
+###When security level is "High Security"
+if [ "$security_level" == "high" ]
+then
+
+  ### INPUT
+	###  (connections with the router as destination)
+	ip6tables -A INPUT -p ipv6-icmp -m icmp6 --icmpv6-type 135 -j ACCEPT
+	ip6tables -A INPUT -p ipv6-icmp -m icmp6 --icmpv6-type 136 -j ACCEPT
+	ip6tables -A INPUT -m state --state INVALID -j DROP
+	ip6tables -A INPUT -j input_rule
+	ip6tables -A INPUT ! -i $WAN -m state --state NEW,RELATED,ESTABLISHED -j ACCEPT
+	ip6tables -A INPUT -p tcp --tcp-flags SYN SYN ! --tcp-option 2 -j  DROP
+
+	
+	# Accept anything not coming from the WAN interface (i.e. eth1:MSP, eth2:lan, and if present Wifi)
+	ip6tables -A INPUT ! -i $WAN -j ACCEPT
+	ip6tables -A INPUT -p ipv6-icmp -j ACCEPT
+	ip6tables -P INPUT DROP
+
+  ### OUTPUT
+	ip6tables -P OUTPUT ACCEPT
+	ip6tables -A OUTPUT -p ipv6-icmp -m icmp6 --icmpv6-type 135 -j ACCEPT
+	ip6tables -A OUTPUT -p ipv6-icmp -m icmp6 --icmpv6-type 136 -j ACCEPT
+	ip6tables -A OUTPUT -m state --state INVALID -j DROP
+	ip6tables -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+  ### FORWARDING
+	### (connections routed through the router)
+	ip6tables -P FORWARD DROP
+	ip6tables -A FORWARD -m state --state INVALID -j DROP
+	ip6tables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+	ip6tables -A FORWARD -j forwarding_rule
+fi
+
+###When security level is "Low Security"
+if [ "$security_level" == "low" ]
+then
+
+  ### INPUT
+	###  (connections with the router as destination)
+	ip6tables -A INPUT -p ipv6-icmp -m icmp6 --icmpv6-type 135 -j ACCEPT
+	ip6tables -A INPUT -p ipv6-icmp -m icmp6 --icmpv6-type 136 -j ACCEPT
+	ip6tables -A INPUT -m state --state INVALID -j DROP
+	ip6tables -A INPUT -j input_rule
+	ip6tables -A INPUT ! -i $WAN -m state --state NEW,RELATED,ESTABLISHED -j ACCEPT
+	ip6tables -A INPUT -p tcp --tcp-flags SYN SYN ! --tcp-option 2 -j  DROP
+
+
+	# Accept anything not coming from the WAN interface (i.e. eth1:MSP, eth2:lan, and if present Wifi)
+	ip6tables -A INPUT ! -i $WAN -j ACCEPT
+	#ip6tables -A INPUT -p ipv6-icmp -j ACCEPT
+	ip6tables -P INPUT DROP
+
+  ### OUTPUT
+	ip6tables -P OUTPUT ACCEPT
+	ip6tables -A OUTPUT -p ipv6-icmp -m icmp6 --icmpv6-type 135 -j ACCEPT
+	ip6tables -A OUTPUT -p ipv6-icmp -m icmp6 --icmpv6-type 136 -j ACCEPT
+	ip6tables -A OUTPUT -m state --state INVALID -j DROP
+	ip6tables -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+  ### FORWARDING
+	### (connections routed through the router)
+	ip6tables -P FORWARD DROP
+	ip6tables -A FORWARD -m state --state INVALID -j DROP
+	ip6tables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+	ip6tables -A FORWARD -j forwarding_rule
+	# Forward anything not coming from the WAN interface (i.e. eth1:MSP, eth2:lan, and if present Wifi)
+	ip6tables -A FORWARD ! -i $WAN -j ACCEPT
+
+fi
+
+## Firewall IPv6 Filter
+/lib/firewall/configure_v6filter_rules
+
+## ICMPv6 Ping
+## icmpv6 filter
+ip6tables -N input_icmp
+ip6tables -N forwarding_icmp
+
+## WenHsien: lead "INPUT" chain into "input_icmp" chain.
+ip6tables -A INPUT ! -i br-lan -p ipv6-icmp -j input_icmp
+
+## WenHsien: Accept ICMPv6 NS NA, always.
+ip6tables -A input_icmp ! -i $LAN -p ipv6-icmp -m icmp6 --icmpv6-type 135 -j ACCEPT
+ip6tables -A input_icmp ! -i $LAN -p ipv6-icmp -m icmp6 --icmpv6-type 136 -j ACCEPT
+
+if [ "$pingEnabled" == "disable" ] ; then
+	ip6tables -A forwarding_icmp -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j ACCEPT
+	ip6tables -A input_icmp -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j DROP
+elif [  "$pingEnabled" == "lan" ] ; then
+	ip6tables -A forwarding_icmp ! -i $LAN -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j DROP
+	ip6tables -A forwarding_icmp -i $LAN -o $LAN -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j ACCEPT
+	ip6tables -A input_icmp ! -i $LAN -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j DROP
+	ip6tables -A input_icmp -i $LAN -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j ACCEPT
+elif [  "$pingEnabled" == "wan" ] ; then
+	ip6tables -A forwarding_icmp -i $LAN -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j ACCEPT
+	ip6tables -A forwarding_icmp ! -i $LAN -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j ACCEPT
+	ip6tables -A input_icmp -i $LAN -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j DROP
+	ip6tables -A input_icmp ! -i $LAN -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j ACCEPT
+elif [  "$pingEnabled" == "both" ] ; then
+	ip6tables -A forwarding_icmp -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j ACCEPT
+	ip6tables -A input_icmp -p ipv6-icmp -m icmp6 --icmpv6-type 128 -j ACCEPT
+fi

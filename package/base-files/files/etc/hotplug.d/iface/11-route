@@ -1,0 +1,11 @@
+#!/bin/sh
+
+. /etc/functions.sh
+include /lib/config
+
+SystemModeStatus=$(uci_get system main system_mode)
+
+[ "$SystemModeStatus" == "1" ] && {
+	/etc/init.d/route boot
+}
+

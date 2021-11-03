@@ -1,0 +1,27 @@
+--- a/common.c
++++ b/common.c
+@@ -2882,8 +2882,8 @@ dhcp6_reset_timer(ev)
+ 		break;
+ 	}
+ 
+-	interval.tv_sec = (ev->retrans * 1000) / 1000000;
+-	interval.tv_usec = (ev->retrans * 1000) % 1000000;
++	interval.tv_sec = (ev->retrans) / 1000;
++	interval.tv_usec = ((ev->retrans) % 1000) * 1000;
+ 	dhcp6_set_timer(&interval, ev->timer);
+ 
+ 	statestr = dhcp6_event_statestr(ev);
+--- a/dhcp6.h
++++ b/dhcp6.h
+@@ -88,9 +88,9 @@ typedef uint64_t u_int64_t;
+ /* timer parameters (msec, unless explicitly commented) */
+ #define SOL_MAX_DELAY	1000
+ #define SOL_TIMEOUT	1000
+-#define SOL_MAX_RT	120000
++#define SOL_MAX_RT	3600000	/* According to RFC7083 */
+ #define INF_TIMEOUT	1000
+-#define INF_MAX_RT	120000
++#define INF_MAX_RT	3600000	/* According to RFC7083 */
+ #define REQ_TIMEOUT	1000
+ #define REQ_MAX_RT	30000
+ #define REQ_MAX_RC	10	/* Max Request retry attempts */

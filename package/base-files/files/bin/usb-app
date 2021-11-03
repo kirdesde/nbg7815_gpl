@@ -1,0 +1,87 @@
+#!/bin/sh
+. /etc/functions.sh
+include /lib/config
+
+action="$1"
+
+[ "$action" == "" ] && exit 1
+
+dlna_db=$(cat /tmp/twonky/twonkyserver/twonkyserver.ini|grep dbdir)
+dlna_enabled=$(uci_get dlna main enabled)
+platform=$(uci get system.main.product_name)
+if [ "$platform" == "NBG6817" ];then
+	samba_enable=$(uci_get samba general enable)
+else
+	samba_enable=$(uci_get system general enable)
+fi
+ftp_enable=$(uci_get proftpd global enable)
+
+# internal use only !!
+tmpfile="/tmp/$(basename $0)"
+
+touch $tmpfile
+. $tmpfile
+
+stop_app()
+{				
+	if [ "$APP_SWITCH" != "" ] && [ "$APP_SWITCH" == "off" ]; then
+		return;
+	fi
+
+	sed /"APP_SWITCH.*"/d $tmpfile -i
+	echo "APP_SWITCH=off" >> $tmpfile	
+	
+	##check DLNA
+	if [ "$dlna_enabled" == "1" ]; then
+		/etc/init.d/dlna stop	
+	fi
+
+	##check SAMBA
+	if [ "$samba_enable" -eq "1" ];then
+		/etc/init.d/samba stop
+	fi
+
+	##check FTP
+	if [ "$ftp_enable" -eq "1" ];then
+		/etc/init.d/proftpd stop
+	fi
+	
+	sleep 1
+}
+
+start_app()
+{
+	/bin/zyxel_backdoor_app
+
+	if [ "$APP_SWITCH" == "" ] || [ "$APP_SWITCH" == "on" ]; then
+		return;
+	fi
+
+	sed /"APP_SWITCH.*"/d $tmpfile -i
+	echo "APP_SWITCH=on" >> $tmpfile	
+
+	if [ "$samba_enable" -eq "1" ];then
+		/bin/USB_app_control.sh reload samba		
+	fi
+
+	if [ "$ftp_enable" -eq "1" ];then
+		/bin/USB_app_control.sh reload proftpd
+	fi
+
+	if [ "$dlna_enabled" == "1" ]; then
+		/etc/init.d/dlna start	
+	fi
+
+}
+
+case "$action" in
+	stop)
+		stop_app
+	;;
+	start)
+		start_app
+	;;
+	*)
+	;;
+esac
+

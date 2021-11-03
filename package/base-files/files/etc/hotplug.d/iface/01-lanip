@@ -1,0 +1,20 @@
+#!/bin/sh
+
+. /etc/functions.sh
+include /lib/config
+
+SystemModeStatus=$(uci_get system main system_mode)
+op_role=$(uci_get system main operation_role)
+
+[ "$op_role" = "controller" ] && ipChnageEnable=$(uci_get network general auto_ip_change)
+
+[ "$ACTION" == "ifup" ]&&[ "$INTERFACE" == "wan" ]&&[ "$ipChnageEnable" == "1" ]&&[ "$SystemModeStatus" == "1" ]&&{
+	/sbin/start_auto_ip_change
+	sleep 3
+}
+
+#[ "$ACTION" == "ifup" ]&&[ "$INTERFACE" == "lan" ]&&[ "$ipChnageEnable" == "1" ]&&[ "$SystemModeStatus" == "2" ]&&{
+#	udhcpc -i br-lan -t 3 -q -n
+#	sleep 3
+#	/sbin/bridge_auto_ip_change
+#}

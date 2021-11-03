@@ -1,0 +1,30 @@
+Index: fstools-2016-01-10/libfstools/overlay.c
+===================================================================
+--- fstools-2016-01-10.orig/libfstools/overlay.c
++++ fstools-2016-01-10/libfstools/overlay.c
+@@ -106,6 +106,12 @@ overlay_mount(struct volume *v, char *fs
+ 		return -1;
+ 	}
+ 
++	if (!strcmp(fs, "ext4")) {
++		char buf[32] = {0};
++		snprintf(buf, sizeof(buf), "e2fsck -pf %s", v->blk);
++		system(buf);
++	}
++
+ 	if (mount(v->blk, "/tmp/overlay", fs, MS_NOATIME, NULL)) {
+ 		ULOG_ERR("failed to mount -t %s %s /tmp/overlay: %s\n", fs, v->blk, strerror(errno));
+ 		return -1;
+@@ -296,6 +302,12 @@ static int overlay_mount_fs(struct volum
+ 
+ 	volume_init(v);
+ 
++	if (!strcmp(fstype, "ext4")) {
++		char buf[32] = {0};
++		snprintf(buf, sizeof(buf), "e2fsck -pf %s", v->blk);
++		system(buf);
++	}
++
+ 	if (mount(v->blk, "/tmp/overlay", fstype, MS_NOATIME, NULL)) {
+ 		ULOG_ERR("failed to mount -t %s %s /tmp/overlay: %s\n",
+ 		         fstype, v->blk, strerror(errno));

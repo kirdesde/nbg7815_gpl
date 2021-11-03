@@ -1,0 +1,21 @@
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -2348,7 +2348,18 @@
+ 				dprintf(LOG_INFO, FNAME, "DH6OPT_STCODE_UNSPECFAIL");
+ 				return (0);
+ 			}
++			/*Kerker 
++			 *Receipt reply with status code->notonlink
++			 */	
++			if (lv->val_num16 == DH6OPT_STCODE_NOTONLINK){
++				dhcp6_remove_event(ev);
+ 
++				if (state == DHCP6S_RELEASE)
++					check_exit();
++				if (client6_start(ifp))
++				exit(1); /* initialization failure. */
++				return (0);
++			}
+ 			/*
+ 			 * Peter: ReadyLogo
+ 			 * RFC3315

@@ -1,0 +1,98 @@
+--- a/addrconf.c
++++ b/addrconf.c
+@@ -210,9 +210,9 @@ update_address(ia, addr, dhcpifp, ctlp, 
+ 		}
+ 
+ 		/* set vlt plt of WAN Global IP */
+-		char str[200]="";
+-		sprintf(str, "ip -6 addr change %s dev %s preferred_lft %lu valid_lft %lu", in6addr2str(&addr->addr, 0), sa->dhcpif->ifname, addr->pltime, addr->vltime);
+-		system(str);
++//		char str[200]="";
++//		sprintf(str, "ip -6 addr change %s dev %s preferred_lft %lu valid_lft %lu", in6addr2str(&addr.addr, 0), sa->dhcpif->ifname, addr.pltime, addr.vltime);
++//		system(str);
+ 
+ 		/* update the timer */
+ 		timo.tv_sec = sa->addr.vltime;
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -825,6 +825,11 @@ client6_expire_refreshtime(arg)
+ 	return (NULL);
+ }
+ 
++#include <inttypes.h>
++#include <math.h>
++#include <stdio.h>
++#include <time.h>
++
+ struct dhcp6_timer *
+ client6_timo(arg)
+ 	void *arg;
+@@ -1017,13 +1022,58 @@ dad_check(ifp, iana_addr, dad_fail_addr,
+ 	return dad_fail_count;
+ }
+ 
++
++static int
++set_plt_vlt_of_wan_ip(ifp)
++	struct dhcp6_if *ifp;
++{
++	struct ia_conf *iac;
++	struct ia *ia;
++	struct iactl_na *iac_na;
++	struct statefuladdr *sa;
++	int set_count = 0, i;
++
++	for (iac = TAILQ_FIRST(&ifp->iaconf_list);
++		iac;
++		iac = TAILQ_NEXT(iac, link))
++	{
++		if (TAILQ_EMPTY(&iac->iadata)) {
++			/* we dont like non-current IA */
++			continue;
++		}
++		for (ia = TAILQ_FIRST(&iac->iadata); ia; ia = TAILQ_NEXT(ia, link)) {
++			if (ia->conf->type != IATYPE_NA)
++				continue;
++
++			iac_na = (struct iactl_na *)ia->ctl;
++			for (sa = TAILQ_FIRST(&iac_na->statefuladdr_head);
++				sa;
++				sa = TAILQ_NEXT(sa, link))
++			{
++				if (sa->dhcpif != ifp)
++					continue;
++
++				/* set vlt plt of WAN Global IP */
++				char str[200]="";
++				sprintf(str, "ip -6 addr change %s dev %s preferred_lft %lu valid_lft %lu",
++						in6addr2str(&sa->addr.addr, 0), sa->dhcpif->ifname,
++						sa->addr.pltime, sa->addr.vltime);
++				system(str);
++				set_count++;
++			}
++		}
++	}
++	return set_count;
++}
++
++
+ struct dhcp6_timer *
+ client6_dad_check(arg)
+ 	void *arg;
+ {
+ 	struct dhcp6_event *ev = (struct dhcp6_event *)arg;
+ 	struct dhcp6_if *ifp = NULL;
+-	int dad_fail_count, count;
++	int dad_fail_count, count, set_count;
+ 	struct in6_addr iana_addr[64];
+ 	struct in6_addr dad_fail_addr[64];
+ 
+@@ -1058,6 +1108,8 @@ client6_dad_check(arg)
+ 		dhcp6_reset_timer(ev);
+ 	}
+ 	else {
++		set_count = set_plt_vlt_of_wan_ip(ifp);
++
+ 		/* Pass DAD: restore to request state */
+ 		ev->state = DHCP6S_REQUEST;
+ 		dhcp6_remove_event(ev);

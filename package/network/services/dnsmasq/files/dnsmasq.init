@@ -1,0 +1,217 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2007 OpenWrt.org
+
+START=60
+DNS_SERVERS=""
+DOMAIN=""
+
+args=""
+
+##check mode,if AP/UR,exit
+sys_mode=$(get_sys_mode)
+op_role=$(uci get system.main.operation_role)
+[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] && exit 0
+
+dhcp_calc() {
+	local ip="$1"
+	local res=0
+
+	while [ -n "$ip" ]; do
+		part="${ip%%.*}"
+		res="$(($res * 256))"
+		res="$(($res + $part))"
+		[ "${ip%.*}" != "$ip" ] && ip="${ip#*.}" || ip=
+	done
+	echo "$res"
+}
+
+append_bool() {
+	local section="$1"
+	local option="$2"
+	local value="$3"
+	local _loctmp
+	config_get_bool _loctmp "$section" "$option" 0
+	[ $_loctmp -gt 0 ] && append args "$value"
+}
+
+dhcp_add() {
+	local cfg="$1"
+	config_get net "$cfg" interface
+	[ -n "$net" ] || return 0
+
+	config_get networkid "$cfg" networkid
+	[ -n "$networkid" ] || networkid="$net"
+
+	config_get ifname "$net" ifname
+	[ -n "$ifname" ] || return 0
+
+	config_get dnsserver "$net" dns
+	[ "$cachelocal" = "0" -a -n "$dnsserver" ] && {
+		DNS_SERVERS="$DNS_SERVERS $dnsserver"
+	}
+
+	append_bool "$cfg" ignore "-2 $ifname" && return 0
+
+	config_get proto "$net" proto
+	[ static = "$proto" ] || return 0
+
+	config_get ipaddr "$net" ipaddr
+	config_get netmask "$cfg" netmask
+	[ -n "$netmask" ] || config_get netmask "$net" netmask
+
+	#check for an already active dhcp server on the interface, unless 'force' is set
+	config_get_bool force "$cfg" force 0
+	[ $force -gt 0 ] || {
+		udhcpc -n -q -s /bin/true -t 1 -i $ifname >&- && {
+			logger -t dnsmasq \
+				"found already running DHCP-server on interface '$ifname'" \
+				"refusing to start, use 'option force 1' to override"
+			#return 0
+		}
+	}
+
+	config_get start "$cfg" start
+	config_get limit "$cfg" limit
+	config_get leasetime "$cfg" lease
+	config_get options "$cfg" options
+
+	leasetime="${leasetime:-12h}"
+	start="$(dhcp_calc "${start:-100}")"
+	limit=$((limit-1))
+	limit="${limit:-150}"
+
+	eval "$(ipcalc.sh $ipaddr $netmask $start $limit)"
+	
+	ipadder=$(uci_get network lan ipaddr)
+	ipadder=$(echo $ipadder | awk -F '.' '{print $1"."$2"."$3"."}')
+	START_TMP=$(echo $START | awk -F '.' '{print $4}')
+	END_TMP=$(echo $END | awk -F '.' '{print $4}')
+	START=$(echo $ipadder$START_TMP) 
+	END=$(echo $ipadder$END_TMP)
+	lanip=$(uci_get network lan ipaddr)
+        
+        if [ "$ignore" = "1" ]; then
+	    append args "-z -i $ifname --dhcp-range=$networkid,$START,$END,$NETMASK,$leasetime${options:+ $options}"
+        fi
+		
+		if [ -z "$ath20_ssid" ] || [ "$op_role" == "controller" ]; then
+		active_w=$(wifisys_tool -g 1 -f 1)
+			if [ "$active_w" == "1" ];then
+				local LAN_V6_IP=$(ifconfig br-lan|grep Scope:Link | awk '{print $3}' | cut -d/ -f1)
+				if [ -n "$LAN_V6_IP" ]; then
+					append args " --address=/Zyxelwifi.com/$lanip --address=/Zyxelwifi.net/$lanip --address=/Zyxelwifi.com/$LAN_V6_IP --address=/Zyxelwifi.net/$LAN_V6_IP"
+				else
+					append args " --address=/Zyxelwifi.com/$lanip --address=/Zyxelwifi.net/$lanip"
+				fi
+			fi
+		fi
+}
+
+Zyxel_checkSetIP() {
+	staticIP2=$(uci_get dhcp lan staticIP2)
+	
+	[ -n "$staticIP2" ] && {
+		staticIP=$(uci_get dhcp lan staticIP)
+		staticIP3=$(uci_get dhcp lan staticIP3)
+		filename1="/tmp/staticIP"
+		filename2="/tmp/staticIP2"
+		echo "$staticIP" | sed -r 's/;/\n/g' > $filename1
+		echo "$staticIP2" | sed -r 's/;/\n/g' > $filename2
+
+		check_i=0;
+		while read line2; do
+			while read line1; do
+				if [ "$line2" == "$line1" ]; then
+					if [ $check_i == 0 ]; then
+						IP_value="$line2"
+					#	echo "a $IP_value"
+					else
+						IP_value="$IP_value;$line2"
+					#	echo "b $IP_value"
+					fi
+					check_i=$(($check_i+1));
+					echo "$check_i"
+				fi
+			done < $filename1
+		done < $filename2
+		
+		[ -n "$staticIP3" ] && {
+			IP_value="$IP_value;$staticIP3"
+			#echo "c $IP_value"
+			uci delete dhcp.lan.staticIP3
+		}
+
+		[ -n "$IP_value" ] && {
+			uci set dhcp.lan.staticIP2="$IP_value"
+		} || {
+			uci delete dhcp.lan.staticIP2
+		}
+
+		uci commit dhcp
+
+		# This command is for emmc and ext4 filesystem
+		/bin/sync
+	}
+}
+
+boot() {
+	start
+#	switch_port lan reset
+}
+
+start() {
+	#Checking IP if they are set by user.
+	Zyxel_checkSetIP;
+	
+	#update /etc/ethers file
+	/sbin/update_ethers
+
+	#update /tmp/dnsmasq.con file
+	/sbin/update_lan_dns
+
+	#if DHCP server disable -> return 0 & exit, else if enable -> run start().
+	ignore=$(uci_get dhcp lan enabled)
+	[ "$ignore" = "0" ] && return 0
+
+	include /lib/network
+	scan_interfaces
+
+	config_load dhcp
+
+	args=""
+	config_foreach dhcp_add dhcp
+
+	/usr/sbin/dnsmasq -u root -C /tmp/dnsmasq.conf $args && {
+		rm -f /tmp/resolv.conf
+		[ -n "$DOMAIN" ] && echo "search $DOMAIN" >> /tmp/resolv.conf
+		DNS_SERVERS="$DNS_SERVERS 127.0.0.1"
+		for DNS_SERVER in $DNS_SERVERS ; do
+			echo "nameserver $DNS_SERVER" >> /tmp/resolv.conf
+		done
+	}
+
+	# That protects to WiFi starting, it avoides to crash at WiFi restarting.
+	[ -f /tmp/Apply_dhcp_GUI ] && rm /tmp/Apply_dhcp_GUI
+
+
+        # DROP the traffic which not from LAN's subnet
+        ipaddr=$(uci_get network lan ipaddr)
+        netmask=$(uci_get network lan netmask)
+        prefix_str=`/bin/ipcalc.sh $ipaddr $netmask | grep PREFIX`
+        prefix=$(echo $prefix_str | sed 's/PREFIX=//g')
+
+        iptables -N BLOCK_DIFF_SUBNET
+        iptables -F BLOCK_DIFF_SUBNET
+        iptables -A BLOCK_DIFF_SUBNET -i br-lan ! -s $ipaddr/$prefix -p udp --dport 53 -j DROP
+        iptables -A BLOCK_DIFF_SUBNET -i br-lan ! -s $ipaddr/$prefix -p tcp --dport 53 -j DROP
+}
+
+stop() {
+	[ -f /tmp/resolv.conf ] && {
+		rm -f /tmp/resolv.conf
+		ln -s /tmp/resolv.conf.auto /tmp/resolv.conf
+	}
+	kill $(cat /var/run/dnsmasq.pid 2> /dev/null) 2> /dev/null
+	[ "$?" -ne "0" ] && kill -9 "$(ps | grep "/usr/sbin/dnsmasq -u root -C /tmp/dnsmasq.conf" | grep -v "grep" | awk '{print $1}')"
+	return 0
+}

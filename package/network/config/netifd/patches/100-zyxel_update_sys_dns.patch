@@ -1,0 +1,36 @@
+diff --git a/config.c b/config.c
+index 78b64ad..672e41f 100644
+--- a/config.c
++++ b/config.c
+@@ -300,6 +300,7 @@ config_init_routes(void)
+ 
+ 	vlist_for_each_element(&interfaces, iface, node)
+ 		interface_ip_update_complete(&iface->config_ip);
++	system("/sbin/zyxel_update_sys_dns");
+ }
+ 
+ static void
+diff --git a/interface.c b/interface.c
+index be05e4a..1003df8 100644
+--- a/interface.c
++++ b/interface.c
+@@ -697,6 +697,7 @@ interface_proto_event_cb(struct interface_proto_state *state, enum interface_pro
+ 	}
+ 
+ 	interface_write_resolv_conf();
++	system("/sbin/zyxel_update_sys_dns");
+ }
+ 
+ void interface_set_proto_state(struct interface *iface, struct interface_proto_state *state)
+diff --git a/proto-shell.c b/proto-shell.c
+index 8a3ff69..cf4c974 100644
+--- a/proto-shell.c
++++ b/proto-shell.c
+@@ -561,6 +561,7 @@ proto_shell_update_link(struct proto_shell_state *state, struct blob_attr *data,
+ 		proto_shell_parse_data(state->proto.iface, cur);
+ 
+ 	interface_update_complete(state->proto.iface);
++	system("/sbin/zyxel_update_sys_dns");
+ 
+ 	if ((state->sm != S_SETUP_ABORT) && (state->sm != S_TEARDOWN)) {
+ 		if (!keep)

@@ -1,0 +1,23 @@
+Index: igmpproxy-0.1/src/igmp.c
+===================================================================
+--- igmpproxy-0.1.orig/src/igmp.c
++++ igmpproxy-0.1/src/igmp.c
+@@ -336,9 +336,16 @@ void acceptIgmp(int recvlen) {
+     src       = ip->ip_src.s_addr;
+     dst       = ip->ip_dst.s_addr;
+ 
+-    /* 
++    /* filter local multicast 239.255.255.250 */
++    if (dst == htonl(0xEFFFFFFA))
++    {
++        my_log(LOG_NOTICE, 0, "The IGMP message was local multicast. Ignoring.");
++        return;
++    }
++
++    /*
+      * this is most likely a message from the kernel indicating that
+-     * a new src grp pair message has arrived and so, it would be 
++     * a new src grp pair message has arrived and so, it would be
+      * necessary to install a route into the kernel for this.
+      */
+     if (ip->ip_p == 0) {

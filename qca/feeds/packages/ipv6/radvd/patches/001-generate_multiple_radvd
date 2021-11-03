@@ -1,0 +1,16 @@
+--- radvd-1.8.3.orig/radvd.c	2011-10-06 18:52:20.000000000 +0800
++++ radvd-1.8.3/radvd.c	        2013-05-10 06:44:16.578718247 +0800
+@@ -291,11 +291,11 @@
+ 			exit(1);
+ 		}
+ 		pidstr[ret] = '\0';
+-		if (!kill((pid_t)atol(pidstr), 0))
++		/*if (!kill((pid_t)atol(pidstr), 0))
+ 		{
+ 			flog(LOG_ERR, "radvd already running, terminating.");
+ 			exit(1);
+-		}
++		}*/
+ 		close(fd);
+ 		fd = open(pidfile, O_CREAT|O_TRUNC|O_WRONLY, 0644);
+ 	}

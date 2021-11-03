@@ -1,0 +1,11 @@
+--- a/send.c	2017-06-14 15:31:04.957564800 +0800
++++ b/send.c	2017-06-14 15:32:26.216042805 +0800
+@@ -246,7 +246,7 @@
+ 
+ 	//Kerker add 2016/01/13
+ 	//Set ralt zero when no default route
+-	if(system("ip -6 route|grep default")!=0){
++	if(system("ip -6 route|grep default")!=0&&!m_6RDEnable==1&&!m_6in4Enable==1&&!m_6to4Enable==1){
+ 		syslog(LOG_USER|LOG_DEBUG, "%s(%d): no default router, return 1", __func__, __LINE__);
+ 		return 1;
+ 	}

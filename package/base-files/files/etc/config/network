@@ -1,0 +1,108 @@
+# Copyright (C) 2006 OpenWrt.org
+
+config interface loopback
+	option ifname	lo
+	option proto	static
+	option ipaddr	127.0.0.1
+	option netmask	255.0.0.0
+
+config interface lan
+	option ifname           'eth0 eth1 eth2 eth3 eth5'
+	option type             'bridge'
+	option proto            'static'
+	option ipaddr           '192.168.123.1'
+	option netmask          '255.255.255.0'
+	option stp              '0'
+	option vid              '1'
+	option priority         '0'
+	option dns1             'ISP,'
+	option dns2             'ISP,'
+	option dns3             'ISP,'
+	option dnsv6_1          'ISP,'
+	option dnsv6_2          'ISP,'
+	option dnsv6_3          'ISP,'
+	option mtu              '1500'
+	option hairpin          '1'
+	option multicast_querier    '1'
+	option igmp_snooping    '1'
+	option hostname         'NBG7815'
+
+config interface wan
+	option ifname           'eth4'
+	option iface            'eth4'
+	option hostname         'NBG7815'
+	option IP_version       'IPv4_Only'
+	option ipv4             '1'
+	option proto            'dhcp'
+	option ipv6             '0'
+	option v6_proto         'dhcp'
+	option ipv6Enable       '0'	
+	option wan_mac_status   '0'
+	option dns1             'ISP,'
+	option dns2             'ISP,'
+	option dns3             'ISP,'
+	option dnsv6_1          'ISP,'
+	option dnsv6_2          'ISP,'
+	option dnsv6_3          'ISP,'
+	option mtu              '1500'
+	option eth_mtu          '1500'
+	option pptp_mtu         '1492'
+	option pppoe_mtu        '1492'
+	option pppoeNailedup    '1'
+	option demand           '300'
+
+config interface wan6rd
+
+config interface wan6in4
+
+config interface wan6to4
+
+config network general
+	option auto_ip_change       '1'
+	option backup_lan_ip        '192.168.123.1'
+	option backup_lan_mask      '255.255.255.0'
+	option backup_lan_gw        ''
+	option backup_aplan_proto   'dhcp'
+	option backup_wan_proto     'dhcp'
+	option backup_wan_mtu       '1500'
+	option IPv6ConfFlag         '1'
+	option wan6rd_enable        '0'
+	option wan6to4_enable       '0'
+	option wan6in4_enable       '0'
+	option dhcpv6pd             '1'
+	option linkLocalOnly        '0'
+	option v6lanstatic          '0'
+	option ULA                  '0'
+
+config interface guest
+	option type		'bridge'
+	option proto		'static'
+	option ipaddr		'192.168.141.1'
+	option netmask		'255.255.255.0'
+	option ieee1905managed	'1'
+	option ipv6     '0'
+	option stp '1'
+
+config interface visitor
+	option type		'bridge'
+	option proto		'static'
+	option ipaddr		'192.168.142.1'
+	option netmask		'255.255.255.0'
+	option ieee1905managed	'1'
+	option ipv6     '0'
+	option stp '1'
+
+config globals globals
+	option ula_prefix auto
+
+config alias 'alias'
+	option proto            'none'
+	option ipaddr           '192.168.123.2'
+	option netmask          '255.255.255.0'
+
+config switch
+	option name 'switch0'
+
+config interface 'ipoe'
+	option mtu '1500'
+	option ipv6 '0'

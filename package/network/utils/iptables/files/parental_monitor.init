@@ -1,0 +1,22 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2008-2010 OpenWrt.org
+
+START=99
+
+boot() {
+
+	/sbin/parental_monitor start
+}
+
+start() {
+	##check hw_nat
+	/sbin/chk_hwnat
+	/sbin/parental_monitor start
+}
+
+stop() {
+	##check hw_nat
+	/sbin/chk_hwnat	
+	/sbin/parental_monitor stop
+}
+

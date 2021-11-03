@@ -1,0 +1,186 @@
+#!/bin/sh
+
+# echo "Start to switch AP to Router"
+
+# #Set LED
+# /sbin/zyxel_led_ctrl APPConnect
+
+# /etc/init.d/backhaul_monitor stop
+# /etc/init.d/gre_daemon stop
+# #local link_monitor_pid=$(ps | grep 'grep' -v |grep "watch -tn 2 /bin/link_monitor" | awk -F" " '{print $1}')
+# #if [ -n "$link_monitor_pid" ];then
+# #  kill $link_monitor_pid
+# #fi
+
+# link_monitor_pid=$(ps | grep -w link_monitor | grep watch | grep -v 'grep' | awk -F " " '{print $1}')
+# if [ -n "$link_monitor_pid" ]; then
+#   kill $link_monitor_pid
+# fi
+
+# link_monitor_AP_pid=$(ps | grep -w link_monitor_AP | grep watch | grep -v 'grep' | awk -F " " '{print $1}')
+# if [ -n "$link_monitor_AP_pid" ]; then
+#   kill $link_monitor_AP_pid
+# fi
+
+# zapi_monitor_AP_pid=$(ps | grep -w zapi_monitor_AP | grep watch | grep -v 'grep' | awk -F " " '{print $1}')
+# if [ -n "$zapi_monitor_AP_pid" ]; then
+#   kill $zapi_monitor_AP_pid
+# fi
+
+# /tmp/switch_mode, flag for start_auto_ip_change restart network at the same time
+touch /tmp/switch_mode
+
+# backup current setting
+uci set network.general.backup_aplan_ip=$(uci get network.lan.ipaddr)
+uci set network.general.backup_aplan_mask=$(uci get network.lan.netmask)
+uci set network.general.backup_aplan_gw=$(uci get network.lan.gateway)
+uci set network.general.backup_aplan_proto=$(uci get network.lan.proto)
+
+# get the past route mode network setting
+old_lan_ip=$(uci get network.general.backup_lan_ip)
+old_lan_mask=$(uci get network.general.backup_lan_mask)
+old_lan_gw=$(uci get network.general.backup_lan_gw)
+old_wan_ip=$(uci get network.general.backup_wan_ip)
+old_wan_mask=$(uci get network.general.backup_wan_mask)
+old_wan_gw=$(uci get network.general.backup_wan_gw)
+old_wan_proto=$(uci get network.general.backup_wan_proto)
+old_wan_mtu=$(uci get network.general.backup_wan_mtu)
+
+###### start
+uci set network.wan.ifname="eth4"
+uci set network.wan.ipaddr="$old_wan_ip"
+uci set network.wan.netmask="$old_wan_mask"
+uci set network.wan.gateway="$old_wan_gw"
+uci set network.wan.proto="$old_wan_proto"
+uci set network.wan.mtu="$old_wan_mtu"
+uci set network.lan.ifname="eth0 eth1 eth2 eth3 eth5"
+uci set network.lan.ipaddr="$old_lan_ip"
+uci set network.lan.netmask="$old_lan_mask"
+uci set network.lan.gateway="$old_lan_gw"
+uci set network.lan.proto="static"
+uci set network.lan.hairpin=1
+uci set network.alias.proto="none"
+uci set network.alias.interface=""
+uci commit network
+
+# uci delete hyd.config.Mode
+# uci commit hyd
+
+uci set system.main.system_mode=1
+uci set system.main.operation_role="controller"
+uci commit system
+
+# uci set upnpd.config.enabled=1
+# uci commit upnpd
+
+# iptables -F;iptables -X;iptables -Z
+# iptables -F -t mangle;iptables -X -t mangle;iptables -Z -t mangle
+# iptables -F -t nat;iptables -X -t nat;iptables -Z -t nat
+# iptables -F -t raw;iptables -X -t raw;iptables -Z -t raw
+# iptables -P INPUT DROP; iptables -P FORWARD DROP
+
+# #/etc/init.d/qos boot
+# #luci-reload password luci_statistics network wireless dnsmasq RA_dhcp6c qca-nss-ecm wireless_macfilter wireless5G_macfilter wifi_schedule wifi_schedule5G parental parental_ex qos
+# /etc/init.d/password restart
+# /etc/init.d/luci_statistics restart
+# /etc/init.d/network restart
+# ## Switch to router mode, clean the netprobe data base
+# /etc/init.d/netprobe stop
+# rm /tmp/netprobe.db
+# rm /tmp/ApplicationData/netprobe.db
+# #
+# for i in 1 2 3
+# do
+# 	ssdk_sh debug phy set $i 0x0 0x9000 4
+# done
+# rm /tmp/zy1905.json
+# /etc/init.d/netprobe start
+# #restart whole radio
+# #rm /tmp/wifi24G_Apply
+# #rm /tmp/wifi5G_Apply
+# #rm /tmp/wifi5G_2_Apply
+# #/etc/init.d/wireless restart
+# #Backhaul
+# #/sbin/wifi up wifi2
+
+# /etc/init.d/firewall restart
+# /etc/init.d/firewall6 restart
+# /etc/init.d/telnet restart
+# /etc/init.d/RA_dhcp6c restart
+# /etc/init.d/dnsmasq restart &
+# /etc/init.d/qca-nss-ecm restart
+# #/etc/init.d/webstr_filter restart
+# #/etc/init.d/webstr_filter_ex restart
+# /etc/init.d/wireless_scheduling restart
+# /etc/init.d/wireless_scheduling5G restart
+# /etc/init.d/wireless_macfilter restart
+# #/etc/init.d/qos restart
+# /etc/init.d/bwm stop
+# /etc/init.d/bwm start
+# /etc/init.d/firewall_blockdevice restart
+# /etc/init.d/miniupnpd restart
+# /etc/init.d/lighttpd restart
+
+# #/usr/sbin/zy1905App 4 0 0 0
+# #/usr/sbin/zy1905App 27 All 1 1
+# /etc/init.d/zy1905 restart
+# #echo master > /tmp/backhaul_fifo &
+# /etc/init.d/backhaul_monitor start
+# /etc/init.d/gre_daemon start
+# /etc/init.d/wan_status_monitor boot
+# rm /tmp/switch_mode
+# #/bin/dnsmasq_guest_lan "RESTART"
+# /usr/sbin/WanPort_monitor &
+# /etc/init.d/APPNotification start &
+
+# ## check mode,if AP/UR,exit
+# sys_mode=$(get_sys_mode)
+# if [ "$sys_mode" != "1" ]; then
+# 	watch -tn 60 /bin/zapi_monitor_AP 1>/dev/null 2>&1 &
+# else
+# 	watch -tn 60 /bin/zapi_monitor 1>/dev/null 2>&1 &
+# fi
+
+guest_wifi24g=$(uci get wireless.ath1.rt_mode_disabled)
+if [ "$guest_wifi24g" == "0" ]; then
+  uci set wireless.ath1.disabled=0
+fi
+
+guest_wifi5g=$(uci get wireless.ath11.rt_mode_disabled)
+if [ "$guest_wifi5g" == "0" ]; then
+  uci set wireless.ath11.disabled=0
+fi
+
+wds_wifi24g_sta=$(uci get wireless.ath3.disabled)
+if [ "$wds_wifi24g_sta" == "0" ]; then
+  uci set wireless.ath3.ap_mode_disabled=0
+else
+  uci set wireless.ath3.ap_mode_disabled=1
+fi
+
+wds_wifi5g_sta=$(uci get wireless.ath13.disabled)
+if [ "$wds_wifi5g_sta" == "0" ]; then
+  uci set wireless.ath13.ap_mode_disabled=0
+else
+  uci set wireless.ath13.ap_mode_disabled=1
+fi
+
+wds_wifi24g_ap=$(uci get wireless.ath2.rt_mode_disabled)
+if [ "$wds_wifi24g_ap" == "0" ]; then
+  uci set wireless.ath2.disabled=0
+  uci set wireless.ath3.disabled=1
+fi
+
+wds_wifi5g_ap=$(uci get wireless.ath12.rt_mode_disabled)
+if [ "$wds_wifi5g_ap" == "0" ]; then
+  uci set wireless.ath12.disabled=0
+  uci set wireless.ath13.disabled=1
+fi
+
+uci commit wireless
+
+# /usr/sbin/RMS_monitor_init.sh start &
+# echo "Finish switching AP to Router"
+/bin/sync
+/sbin/zyxel_led_ctrl Reboot
+reboot -f

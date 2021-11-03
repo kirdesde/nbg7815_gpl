@@ -1,0 +1,117 @@
+--- radvd-1.8.3_old/send.c	2016-02-01 17:07:20.511393600 +0800
++++ radvd-1.8.3_new/send.c	2016-02-02 08:50:56.939874473 +0800
+@@ -114,6 +114,106 @@
+ 
+ }
+ 
++//use popen to get system call output
++int DoDoCommand(char* cmd)
++{
++	FILE* fp= NULL;
++	if((fp= popen(cmd, "r"))==NULL)
++		return 1;
++	if(fgets(cmd, 1024, fp)==NULL)
++		return 1;
++	if( strlen(cmd)>0 && cmd[strlen(cmd)-1]==10 )
++		cmd[strlen(cmd)-1]= 0;
++	pclose(fp);
++	return 0;
++}
++
++//2016/02/02, new version check_wan_ip_empty()
++int check_wan_ip_empty()
++{
++	char cmd[1024]={};
++	int m_6RDEnable= 0;
++	int m_6to4Enable= 0;
++	int m_6in4Enable= 0;
++	int m_ULAEnable= 0;
++	char m_ifname[128]={};
++	
++	//check if 6rd is enabled.
++	strcpy(cmd, "uci get network.general.wan6rd_enable");
++	DoDoCommand(cmd);
++	m_6RDEnable= atoi(cmd);
++	
++	//check if 6to4 is enabled.
++	strcpy(cmd, "uci get network.general.wan6to4_enable");
++	DoDoCommand(cmd);
++	m_6to4Enable= atoi(cmd);
++	
++	//check if 6in4 is enabled.
++	strcpy(cmd, "uci get network.general.wan6in4_enable");
++	DoDoCommand(cmd);
++	m_6in4Enable= atoi(cmd);
++	
++	//check if ULA is enabled.
++	strcpy(cmd, "uci get network.general.ULA");
++	DoDoCommand(cmd);
++	m_ULAEnable= atoi(cmd);
++
++	//check interface name is up
++	if( (m_6RDEnable==1 && !check_tunnel_interface("6rd-wan6rd")) ||
++		(m_6to4Enable==1 && !check_tunnel_interface("6to4-wan6to4")) ||
++		(m_6in4Enable==1 && !check_tunnel_interface("6in4-wan6in4")) )
++	{
++		syslog(LOG_DEBUG, "%s(%d): return 1 because tunnel interface is not up", __func__, __LINE__);
++		return 1;
++	}
++	
++	//get current WAN interface name.
++	if(m_6RDEnable==1)
++		strcpy(m_ifname, "6rd-wan6rd");
++	else if(m_6to4Enable==1)
++		strcpy(m_ifname, "6to4-wan6to4");
++	else if(m_6in4Enable==1)
++		strcpy(m_ifname, "6in4-wan6in4");
++	else //not tunneling mode
++	{
++		strcpy(cmd, "uci get dhcp6c.basic.ifname"); //this line is danger, who decide value of dhcp6c.basic.ifname?
++		DoDoCommand(cmd);
++		strcpy(m_ifname, cmd);
++	}
++	//check does wan interface have global IPv6 address
++	snprintf(cmd, sizeof(cmd), "ifconfig %s | grep Global | awk '{print $3}'", m_ifname);
++	DoDoCommand(cmd);
++	if(strstr(cmd, ":")==NULL)
++	{
++		syslog(LOG_DEBUG, "%s(%d): interface:%s does not have IPv6 address, return 1", __func__, __LINE__, m_ifname);
++		return 1;
++	}
++	//syslog(LOG_DEBUG, "%s(%d): m_6RDEnable:%d, m_6to4Enable:%d, m_6in4Enable:%d, m_ULAEnable:%d, m_ifname:%s", __func__, __LINE__, m_6RDEnable, m_6to4Enable, m_6in4Enable, m_ULAEnable, m_ifname);
++	
++	//check wan link status(1: down, 0:up)
++	int wan_likn_status= 0;
++	strcpy(cmd, "/sbin/swconfig dev eth0 port 5 get link | grep down -c");
++	DoDoCommand(cmd);
++	if(atoi(cmd)==1)
++	{
++		syslog(LOG_DEBUG, "%s(%d): wan cable is down, return 1", __func__, __LINE__);
++		return 1;
++	}
++
++	//Kerker add 2016/01/13
++	//Set ralt zero when no default route
++	if(system("ip -6 route|grep default")!=0){
++		syslog(LOG_USER|LOG_DEBUG, "%s(%d): return 1", __func__, __LINE__);
++		return 1;
++	}
++	
++	//syslog(LOG_USER|LOG_DEBUG, "%s(%d): return 0", __func__, __LINE__);
++	return 0;
++
++}
++
++#if 0
++//old version check_wan_ip_empty()
+ int check_wan_ip_empty(void)
+ {
+ 	system("uci get network.general.wan6rd_enable > /tmp/wan6rd_enable");
+@@ -268,6 +368,7 @@
+ 	return 0;
+ 
+ }
++#endif
+ 
+ void set_prefix_lifetimes_to_zero(struct Interface *iface)
+ {

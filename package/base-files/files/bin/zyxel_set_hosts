@@ -1,0 +1,16 @@
+#!/bin/sh
+. /etc/functions.sh
+
+RedirectIP=$(uci get network.lan.ipaddr)
+hostname=$(uci get system.main.hostname)
+
+echo "$hostname" > /proc/sys/kernel/hostname
+echo "$RedirectIP $hostname" > /etc/hosts
+echo "$RedirectIP myrouter" >> /etc/hosts
+echo "127.0.0.1 localhost" >> /etc/hosts
+## To avoid vulnerability with DNS record based autoconfiguration and autodiscovery methods. 
+## Redirect "wpad" and "isatap" to device itself. 
+echo "$RedirectIP wpad" >> /etc/hosts
+echo "$RedirectIP isatap" >> /etc/hosts
+echo "$RedirectIP Zyxelwifi.com" >> /etc/hosts
+echo "$RedirectIP Zyxelwifi.net" >> /etc/hosts

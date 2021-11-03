@@ -1,0 +1,44 @@
+#!/bin/sh
+
+. /etc/functions.sh
+. /lib/network/config.sh
+include /lib/config
+
+PPP_IFACE="$1"
+PPP_TTY="$2"
+PPP_SPEED="$3"
+PPP_LOCAL="$4"
+PPP_REMOTE="$5"
+PPP_IPPARAM="$(echo $6 | sed 's/\./_/g')"
+
+export PPP_IFACE PPP_TTY PPP_SPEED PPP_LOCAL PPP_REMOTE PPP_IPPARAM
+
+config_load network
+config_get proto wan proto
+##add pptp routing rule and route info in routing table vpn 
+[ "$proto" == "pptp" ] && {
+        /usr/sbin/ip rule del dev br-lan table vpn 2>/dev/null
+	/usr/sbin/ip rule add dev br-lan table vpn 2>/dev/null
+        /usr/sbin/ip route add default via $5 dev pptp-wan table vpn 2>/dev/null
+}
+
+[ -z "$PPP_IPPARAM" -o -z "$PPP_LOCAL" ] || {
+	uci_set_state network "$PPP_IPPARAM" ifname "$PPP_IFACE"
+	uci_set_state network "$PPP_IPPARAM" ipaddr "$PPP_LOCAL"
+	uci_set_state network "$PPP_IPPARAM" gateway "$PPP_REMOTE"
+
+	local dns="$DNS1${DNS2:+ $DNS2}"
+	[ -n "$dns" ] && add_dns "$PPP_IPPARAM" $dns
+}
+
+[ -z "$PPP_IPPARAM" ] || env -i ACTION="ifup" INTERFACE="$PPP_IPPARAM" DEVICE="$PPP_IFACE" PROTO=ppp /sbin/hotplug-call "iface"
+
+[ -d /etc/ppp/ip-up.d ] && {
+	for SCRIPT in /etc/ppp/ip-up.d/*
+	do
+		[ -x "$SCRIPT" ] && "$SCRIPT" "$@"
+	done
+}
+	uptime_start=$(cat /proc/uptime  | cut -d ' ' -f1 | cut -d '.' -f1)
+	echo $uptime_start > /tmp/3g_time
+	rm /tmp/3g_stop 

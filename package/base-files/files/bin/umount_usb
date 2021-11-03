@@ -1,0 +1,30 @@
+#!/bin/sh
+. /etc/functions.sh
+include /lib/config
+
+usb_slot="$1"
+usb_node="$2"
+dev_node="$3"
+
+[ "$usb_slot" == "" || "$usb_node" == "" || "$dev_node" == "" ] && exit 1
+
+part_num="$(echo $dev_node | awk -F"sd[a-z]" '{print $2}')"
+mount_pt=$(ls -d "/tmp/storage/$usb_slot/${usb_slot}_${usb_node}_$part_num")				
+
+if df | grep "$mount_pt"; then
+	/bin/usb-app "stop"
+#	fuser -k $mount_pt
+	umount $mount_pt
+	rm -fr $mount_pt
+fi
+
+if [ -z "$(ls /tmp/storage/$usb_slot)" ]; then
+	rm -fr /tmp/storage/$usb_slot
+
+	if [ "$usb_slot" == "usb1" ]; then
+		led_ctrl USB0 off			
+	elif [ "$usb_slot" == "usb2" ]; then
+		led_ctrl USB1 off
+	fi
+fi
+

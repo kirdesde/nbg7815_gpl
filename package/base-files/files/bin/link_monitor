@@ -1,0 +1,189 @@
+#!/bin/sh
+
+product=$(uci get system.main.product_name)
+wan_proto=$(uci get network.wan.proto)
+wan_ifname=$(uci get network.wan.ifname)
+wan_phy_linked=$(swconfig dev switch0 port 5 get link|grep up)
+
+## Wan IP Address
+if [ "$wan_proto" == "pppoe" ]; then
+  wan_info=$(ifconfig $wan_proto-wan | grep "inet addr" | awk -F ":" '{print $2}' | awk '{print $1}')
+elif [ "$wan_proto" == "pptp" ] ;then
+  wan_info=$(ifconfig $wan_proto-wan | grep "inet addr" | awk -F ":" '{print $2}' | awk '{print $1}')
+else
+  wan_info=$(ifconfig $wan_ifname | grep "inet addr" | awk -F ":" '{print $2}' | awk '{print $1}')
+fi
+
+## Check to DUT connects status
+if [ -z "$wan_phy_linked" ]; then
+  echo -n > /var/connect_internet
+else
+  if [ -n "$wan_info" ]; then
+    ping 8.8.8.8 -c 1 -W 2 | grep time > /var/connect_internet
+  else
+    echo -n > /var/connect_internet
+  fi
+
+  connect_value=$(cat /var/connect_internet)
+  if [ "$connect_value" = "" ] ;then
+    ## ping fail, use wget to check
+    rm /tmp/check_internet_ok_wget
+    chk_internet wget "http://google.com"&
+    ## wget & nslookup has no time out setting option, we add sleep for time out purpose
+    sleep 2
+    if [ -e /tmp/check_internet_ok_wget ];then
+      #echo "wget OK"  > /dev/console
+      rm /tmp/check_internet_ok_nslookup
+    else
+      #echo "wget time out"  > /dev/console
+      killall chk_internet
+      rm /tmp/check_internet_ok_nslookup
+      chk_internet nslookup "google.com" "8.8.4.4"&
+      sleep 2
+      [ -e /tmp/check_internet_ok_nslookup ] || {
+        #echo nslookup time out > /dev/console
+        killall chk_internet
+      }
+    fi
+  else
+    rm /tmp/check_internet_ok_wget
+    rm /tmp/check_internet_ok_nslookup
+  fi
+
+  if [ "$connect_value" != "" ] || [ -e /tmp/check_internet_ok_wget ] || [ -e /tmp/check_internet_ok_nslookup ];then
+    [ ! -f /tmp/zyxel_ntpclient_settime.flag ] && . /etc/hotplug.d/iface/20-ntpclient
+  fi
+fi
+
+## Check to DUT cpu usage
+CPU_PRVE=$(cat /tmp/cpu_time_prve)
+CPU=$(grep "cpu " /proc/stat | awk '{print $2,$3,$4,$5,$6,$7,$8}')
+SYS_IDLE_1=$(echo $CPU_PRVE | awk '{print $4}')
+Total_1=$(echo $CPU_PRVE | awk '{print $1+$2+$3+$4+$5+$6+$7}')
+SYS_IDLE_2=$(echo $CPU | awk '{print $4}')
+Total_2=$(echo $CPU | awk '{print $1+$2+$3+$4+$5+$6+$7}')
+SYS_IDLE=$((SYS_IDLE_2 - SYS_IDLE_1))
+Total=$((Total_2 - Total_1))
+SYS_USAGE=$(awk -v SYS_IDLE=$SYS_IDLE -v Total=$Total 'BEGIN{printf("%.2f", 100*(1-(SYS_IDLE/Total)))}')
+[ -n "$CPU_PRVE" ] && echo "$SYS_USAGE" > /tmp/cpu_usage
+echo "$CPU" > /tmp/cpu_time_prve
+
+## After reading/writing data on USB, it will release cash memory
+top -n 1 > /tmp/top_log &
+sleep 1
+
+io_value=$( cat /tmp/top_log | grep "CPU:" | awk '{print $10}' | awk '{FS="%"} {print $1}' )
+
+if [ $io_value -ge 1 ] ;then
+  echo 0 > /tmp/io_value_sum
+fi
+
+if [ -f /tmp/io_value_sum ] ;then
+
+  io_value_sum=$(cat /tmp/io_value_sum)
+  sum=$(($io_value_sum+1))
+
+  echo $sum > /tmp/io_value_sum
+
+  if [ $sum -eq 30 ] ;then
+    echo 3 > /proc/sys/vm/drop_caches
+    rm /tmp/io_value_sum
+  fi
+
+fi
+
+## Check igmpproxy process
+check_igmpproxy_process=$( ps | grep "/usr/sbin/igmpproxy" | grep -v "grep" | awk '{print $1}')
+parser_words=$( cat /tmp/top_log | grep "/usr/sbin/igmpproxy" | sed '2,100d' | awk '{print $7}' | awk '{FS="%"} {print $1}' )
+
+if [ $parser_words -ge 40 ] ;then
+  kill -9 $check_igmpproxy_process
+  /etc/init.d/igmpproxy start
+fi
+
+rm /tmp/top_log
+
+## check lighttpd log size
+lighttpd_log_size=$(ls /tmp/log/lighttpd/error.log -la | awk -F' ' '{print $5}')
+if [ "$lighttpd_log_size" -gt 6291456 ]; then
+  echo "" > /tmp/log/lighttpd/error.log
+fi
+
+## Optimize channel width for 5G High
+## For CH country code
+## Check every 120 seconds (optimize_check_period)
+## Update optimize_ch_width_uptime_mark every 120 seconds or country is changed
+#countrycode=$(fw_printenv countrycode | awk -F"=" '{print $2}' | tr [a-f] [A-F] | tr -d "\n")
+if [ "$product" == "WSQ77" ]; then
+  optimize_check_period=120
+  country=$(uci get wireless.wifi2.country)
+  cac_state=$(iwpriv ath20 get_cac_state | awk -F":" '{print $2}' | tr -d  ' ' | tr -d "\n")
+  ath20up=$(ifconfig ath20| grep UP |awk -F" " '{print $1}')
+
+  if [ ! -e /tmp/optimize_country_mark ]; then
+    echo $country | tr -d "\n" > /tmp/optimize_country_mark
+  elif [ $country != $(cat /tmp/optimize_country_mark) ]; then
+    echo $country | tr -d "\n" > /tmp/optimize_country_mark
+    cat /proc/uptime | awk -F"." '{print $1}' | tr -d "\n" > /tmp/optimize_ch_width_uptime_mark
+  fi
+
+  if [ "$country" == "CH" ]; then
+    if [ ! -e /tmp/optimize_ch_width_uptime_mark ] || [ "$ath20up" != "UP" ]; then
+      cat /proc/uptime | awk -F"." '{print $1}' | tr -d "\n" > /tmp/optimize_ch_width_uptime_mark
+    fi
+    curr_uptime=$(cat /proc/uptime | awk -F"." '{print $1}' | tr -d "\n")
+    mark_uptime=$(cat /tmp/optimize_ch_width_uptime_mark)
+    if [ "$cac_state" == 0 ] && [ "$ath20up" == "UP" ] && [ $((curr_uptime - mark_uptime)) -ge $optimize_check_period ]; then
+      cat /proc/uptime | awk -F"." '{print $1}' | tr -d "\n" > /tmp/optimize_ch_width_uptime_mark
+      chwidth=$(iwpriv ath20 get_chwidth | awk -F: '{print $2}' | tr -d ' ' | tr -d "\n")
+      channel=$(iwlist ath20 channel | grep 'Current Frequency'| awk -F 'Channel ' '{print $2}'| awk -F ')' '{print $1}'| tr -d ' ' | tr -d "\n")
+      chwidth_set=$(uci get wireless.wifi2.channel_width)
+
+      if [ "$chwidth" != 2 ] && [ "$chwidth_set" == "80" -o "$chwidth_set" == "Auto" ] && [ "$channel" -le 128 ]; then
+        logger -t dfs -p user.debug "Change channel width to 80MHz"
+        /usr/sbin/zlog 7 0 " [$chwidth][$chwidth_set][$channel]"
+        zlog_dfs_updatetime=$(stat -c %Y /tmp/zlog_dfs_updatetime)
+        if [ -z "$zlog_dfs_updatetime" ] || [ $(($(date +%s) - zlog_dfs_updatetime)) -ge 600 ]; then #Prevent to log many times in short period of time.
+          /usr/sbin/zlog 7 0 "Change width of channel $channel from $chwidth to 80MHz, 123"
+          touch /tmp/zlog_dfs_updatetime
+        fi
+        iwpriv ath20 doth_ch_chwidth $channel 5 80
+        iwpriv ath20 mode 11ACVHT80
+
+      elif [ "$chwidth" != 1 ] && [ "$chwidth_set" == "80" -o "$chwidth_set" == "Auto" ] && [ "$channel" == 132 -o "$channel" == 136 ]; then
+        logger -t dfs -p user.debug "Change channel width to 40MHz"
+        /usr/sbin/zlog 7 0 "Change width of channel $channel from $chwidth to 40MHz"
+        rm -f /tmp/zlog_dfs_updatetime
+        iwpriv ath20 doth_ch_chwidth $channel 5 40
+        case "$channel" in
+          100|108|116|124|132)
+            iwpriv ath20 mode 11ACVHT40PLUS
+          ;;
+          104|112|120|128|136)
+            iwpriv ath20 mode 11ACVHT40MINUS
+          ;;
+        esac
+
+      elif [ "$chwidth" != 1 ] && [ "$chwidth_set" == "40" ] && [ "$channel" -lt 136 ]; then
+        logger -t dfs -p user.debug "Change channel width to 40MHz"
+        /usr/sbin/zlog 7 0 "Change width of channel $channel from $chwidth to 40MHz"
+        rm -f /tmp/zlog_dfs_updatetime
+        iwpriv ath20 doth_ch_chwidth $channel 5 40
+        case "$channel" in
+          100|108|116|124|132)
+            iwpriv ath20 mode 11ACVHT40PLUS
+          ;;
+          104|112|120|128|136)
+            iwpriv ath20 mode 11ACVHT40MINUS
+          ;;
+        esac
+      elif [ "$chwidth" != 0 ] && [ "$chwidth_set" == "20" ]; then
+        logger -t dfs -p user.debug "Change channel width to 20MHz"
+        /usr/sbin/zlog 7 0 "Change width of channel $channel from $chwidth to 20MHz"
+        rm -f /tmp/zlog_dfs_updatetime
+        iwpriv ath20 doth_ch_chwidth $channel 5 20
+        iwpriv ath20 mode 11ACVHT20
+      fi
+    fi
+  fi
+fi

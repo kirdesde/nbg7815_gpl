@@ -1,0 +1,99 @@
+#!/bin/sh
+proto=`uci get network.wan.proto`
+if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+WAN="$proto"-wan
+else
+WAN=`uci get network.wan.ifname`
+fi
+LAN="br-lan"
+#LAN=`uci get network.lan.ifname`
+
+#iptables -t nat -A PREROUTING -j prerouting_rule
+#iptables -t nat -A POSTROUTING -j postrouting_rule
+
+#nat=`uci get nat.general.nat`
+#case $nat in
+#enable)
+#[ -z "$WAN" ] || iptables -t nat -A POSTROUTING -o $WAN -j MASQUERADE
+#;;
+#esac
+
+count=`uci get nat.general.rules_count`
+ruleid=1
+while [ "$ruleid" -le "$count" ]
+do
+  StatusEnable=`uci get nat.rule$ruleid.StatusEnable`
+  if [ "$StatusEnable" = "1" ] ; then
+    service=`uci get nat.rule$ruleid.service`
+    localip=`uci get nat.rule$ruleid.local_ip`
+    wanip=`uci get nat.rule$ruleid.wan_ip`
+    proto=`uci get firewall.$service.protocol`
+    port=`uci get firewall.$service.port`
+
+    case $proto in
+    tcp|udp) protocol="-p $proto --dport $port" ;;
+    icmp) protocol="-p $proto" ;;
+    esac
+
+    case $wanip in
+    0.0.0.0) wan="" ;;
+    *) wan="-s $wanip" ;;
+    esac
+
+    case $service in
+    any)
+    iptables -t nat -A prerouting_rule_nat -i $WAN $wan -j DNAT --to $localip
+    iptables -A forwarding_rule_nat -i $WAN $wan -d $localip -j ACCEPT
+    ;;
+    *)
+    iptables -t nat -A prerouting_rule_nat -i $WAN $wan $protocol -j DNAT --to $localip:$port
+    iptables -A forwarding_rule_nat -i $WAN $wan -d $localip $protocol -j ACCEPT
+    ;;
+    esac
+  fi
+  ruleid=`expr $ruleid + 1`
+done
+
+
+#number=`uci get nat.general.number`
+#wanproto=`uci get network.wan.proto`
+#case "$wanproto" in
+#	static) wanip=`uci get network.wan.ipaddr`;;
+#	dhcp) wanip=`ifconfig vlan10 | grep "inet addr" | cut -d: -f 2 | sed s/Bcast//g` ;;
+#	pppoe) wanip=`ifconfig ppoe-wan | grep "inet addr" | cut -d: -f 2 | sed s/Bcast//g` ;;
+#esac
+#ruleid=1
+#while [ "$ruleid" -le "$number" ]
+#do
+#localip=`uci get nat.rule$ruleid.localipaddr`
+#localport=`uci get nat.rule$ruleid.localport`
+#publicport=`uci get nat.rule$ruleid.pubport`
+#
+#cmd=iptables\ -t\ nat\ -A\ prerouting_rule\ -d\ $wanip\ -p\ tcp\ --dport\ $publicport\ -j\ DNAT\ --to\ $localip:$localport
+#cmd1=iptables\ -A\ forwarding_rule\ -p\ tcp\ -d\ $localip\ --dport\ $localport\ -j\ ACCEPT
+#cmd2=iptables\ -t\ nat\ -A\ prerouting_rule\ -d\ $wanip\ -p\ udp\ --dport\ $publicport\ -j\ DNAT\ --to\ $localip:$localport
+#cmd3=iptables\ -A\ forwarding_rule\ -p\ udp\ -d\ $localip\ --dport\ $localport\ -j\ ACCEPT
+#
+#echo "$cmd" | sh
+#echo "$cmd1" | sh
+#echo "$cmd2" | sh
+#echo "$cmd3" | sh
+#
+#ruleid=`expr $ruleid + 1`
+#done
+#
+#dmz=`uci get nat.general.dmzenable`
+#if [ "$dmz" == "yes" ]; then
+#
+#echo "starting DMZ....."
+#
+#dmzip=`uci get nat.general.dmzip`
+#cmd=iptables\ -t\ nat\ -A\ PREROUTING\ -p\ tcp\ -d\ $wanip\ -j\ DNAT\ --to\ $dmzip
+#cmd1=iptables\ -t\ nat\ -A\ PREROUTING\ -p\ udp\ -d\ $wanip\ -j\ DNAT\ --to\ $dmzip
+#cmd2=iptables\ -A\ FORWARD\ -p\ tcp\ -d\ $dmzip\ -j\ ACCEPT
+#cmd3=iptables\ -A\ FORWARD\ -p\ udp\ -d\ $dmzip\ -j\ ACCEPT
+#echo "$cmd" | sh
+#echo "$cmd1" | sh
+#echo "$cmd2" | sh
+#echo "$cmd3" | sh
+#fi

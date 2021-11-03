@@ -1,0 +1,48 @@
+--- a/dhcp6c.c	2016-05-20 17:01:21.025186100 +0800
++++ b/dhcp6c.c	2016-05-20 17:05:56.903675104 +0800
+@@ -158,6 +158,8 @@
+ 
+ #define MAX_ELAPSED_TIME 0xffff
+ 
++static struct authparam *authparam = NULL, reconfig_auth;/*authparam for reconfigure*/
++
+ int
+ main(argc, argv)
+ 	int argc;
+@@ -2139,6 +2141,18 @@
+ 		return (-1);
+ 	}
+ 
++	/*
++	 *Kerker WAN_7084 Check reconfigure auth
++	 */
++	if(optinfo->authproto==DHCP6_AUTHPROTO_UNDEF){
++		dprintf(LOG_INFO, FNAME, "failed to process authentication authproto undef");
++		return (-1);
++	}
++	else if (process_auth(&reconfig_auth, dh6, len, optinfo)) {
++		dprintf(LOG_INFO, FNAME, "failed to process authentication");
++		return (-1);
++	}
++
+ 	/*reconfigureAccept reconfigureAccept reconfigureAccept
+ 	 * If the client included a Rapid Commit option in the Solicit message,
+ 	 * the client discards any Reply messages it receives that do not
+@@ -2810,6 +2824,17 @@
+ 		authparam->flags &= ~AUTHPARAM_FLAGS_NOPREVRD;
+ 	}
+ 
++	/*
++	 *Kerker
++	 *	set authparam for reconfigure  **can use new event to improve it**
++	 */
++	reconfig_auth.authproto=authparam->authproto;
++	reconfig_auth.authalgorithm=authparam->authalgorithm;
++	reconfig_auth.authrdm=authparam->authrdm;
++	reconfig_auth.key=authparam->key;
++	reconfig_auth.flags=authparam->flags;
++	reconfig_auth.prevrd=authparam->prevrd;
++
+ 	return (0);
+ }
+ 

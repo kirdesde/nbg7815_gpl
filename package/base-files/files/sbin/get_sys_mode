@@ -1,0 +1,10 @@
+#!/bin/sh
+# Copyright (C) 2006 OpenWrt.org
+
+. /lib/functions.sh
+
+config_load system
+config_get sys_mode main system_mode
+
+[ -n "$sys_mode" ] && echo "$sys_mode" || echo -1
+

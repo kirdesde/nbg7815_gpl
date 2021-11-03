@@ -1,0 +1,41 @@
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -2197,7 +2197,7 @@
+ 	ssize_t len;
+ 	struct dhcp6_optinfo *optinfo;
+ {
+-	struct dhcp6_listval *lv, *iav;
++	struct dhcp6_listval *lv, *iav, *siav;
+ 	struct dhcp6_event *ev;
+ 	int state;
+ 	struct ia_conf *iac;
+@@ -2296,6 +2296,14 @@
+ 					dprintf(LOG_INFO, FNAME, "no IA_NA option after sending RENEW or REBIND packet");
+ 					return (0);
+ 				}
++				siav = TAILQ_FIRST(&iav->sublist);
++				if(!siav){
++					ev->timeouts++;
++					client6_send(ev);
++					dhcp6_reset_timer(ev);					
++					dprintf(LOG_INFO, FNAME, "no prefix option in IA_NA option ");
++					return (0);
++				}
+ 			}
+ 			else if (evd->type == DHCP6_EVDATA_IAPD) {
+ 				for (iac = TAILQ_FIRST(&ifp->iaconf_list); iac; iac = TAILQ_NEXT(iac, link)) {
+@@ -2314,6 +2322,14 @@
+ 					dprintf(LOG_INFO, FNAME, "no IA_PD option after sending RENEW or REBIND packet");
+ 					return (0);
+ 				}
++				siav = TAILQ_FIRST(&iav->sublist);
++				if(!siav){
++					ev->timeouts++;
++					client6_send(ev);
++					dhcp6_reset_timer(ev);					
++					dprintf(LOG_INFO, FNAME, "no prefix option in IA_PD option ");
++					return (0);
++				}
+ 			}
+ 		}
+ 	}

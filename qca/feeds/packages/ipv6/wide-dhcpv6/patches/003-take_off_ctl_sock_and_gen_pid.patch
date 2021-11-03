@@ -1,0 +1,64 @@
+--- wide-dhcpv6-20080615.orig/dhcp6c.c	2008-06-15 15:48:41.000000000 +0800
++++ wide-dhcpv6-20080615/dhcp6c.c	2013-05-08 19:37:29.096754723 +0800
+@@ -361,13 +361,14 @@
+ 	/* set up control socket */
+ 	if (ctlkey == NULL)
+ 		dprintf(LOG_NOTICE, FNAME, "skip opening control port");
++/*
+ 	else if (dhcp6_ctl_init(ctladdr, ctlport,
+ 	    DHCP6CTL_DEF_COMMANDQUEUELEN, &ctlsock)) {
+ 		dprintf(LOG_ERR, FNAME,
+ 		    "failed to initialize control channel");
+ 		exit(1);
+ 	}
+-
++*/
+ 	if (signal(SIGHUP, client6_signal) == SIG_ERR) {
+ 		dprintf(LOG_WARNING, FNAME, "failed to set signal: %s",
+ 		    strerror(errno));
+@@ -423,9 +424,18 @@
+ client6_startall(isrestart)
+ 	int isrestart;
+ {
++	int pid;
++	FILE *pidfp = NULL;
++	char openfile[30];
+ 	struct dhcp6_if *ifp;
+ 
+ 	for (ifp = dhcp6_if; ifp; ifp = ifp->next) {
++	sprintf(openfile,"/tmp/run/dhcp6c-%s.pid",ifp->ifname);
++		pid = getpid();
++		if ((pidfp = fopen(openfile, "w")) != NULL) {
++			fprintf(pidfp, "%d\n", pid);
++			fclose(pidfp);
++		}
+ 		if (isrestart &&ifreset(ifp)) {
+ 			dprintf(LOG_NOTICE, FNAME, "failed to reset %s",
+ 			    ifp->ifname);
+@@ -763,6 +773,12 @@
+ 
+ 	switch(command) {
+ 	case DHCP6CTL_COMMAND_START:
++/* the ifid might have changed, so reset it before releasing the lease */
++		if (ifreset(ifp)) {
++			dprintf(LOG_NOTICE, FNAME, "failed to reset %s",
++				ifname);
++			return (-1);
++		}
+ 		free_resources(ifp);
+ 		if (client6_start(ifp)) {
+ 			dprintf(LOG_NOTICE, FNAME, "failed to restart %s",
+@@ -1537,11 +1553,11 @@
+ 		case DHCP6_EVDATA_IAPD:
+ 			stcode = DH6OPT_STCODE_NOPREFIXAVAIL;
+ 			stcodestr = "NoPrefixAvail";
+-			break;
++			continue;
+ 		case DHCP6_EVDATA_IANA:
+ 			stcode = DH6OPT_STCODE_NOADDRSAVAIL;
+ 			stcodestr = "NoAddrsAvail";
+-			break;
++			continue;
+ 		default:
+ 			continue;
+ 		}

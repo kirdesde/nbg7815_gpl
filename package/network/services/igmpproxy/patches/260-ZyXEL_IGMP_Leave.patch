@@ -1,0 +1,497 @@
+Index: igmpproxy-0.1/src/igmpproxy.h
+===================================================================
+--- igmpproxy-0.1.orig/src/igmpproxy.h	2017-08-08 19:31:16.312419311 +0800
++++ igmpproxy-0.1/src/igmpproxy.h	2017-08-08 19:31:16.320419311 +0800
+@@ -67,6 +67,15 @@
+ #define MAX_IP_HEADER_LEN	60
+ #define IP_HEADER_RAOPT_LEN	24
+ 
++#define MAX_SRC_IP     32
++#define GROUP_QUERY_TIMEOUT     260
++// check query-report status
++#define CREATE_TIME             0
++#define GENERAL_QUERY           1
++#define SPECIFIC_QUERY          2
++#define GENERAL_QUERY_REPORT    3
++#define SPECIFIC_QUERY_REPORT   4
++
+ #define MAX_MC_VIFS    32     // !!! check this const in the specific includes
+ 
+ // Useful macros..          
+@@ -169,6 +178,28 @@
+     unsigned short      fastUpstreamLeave;
+ };
+ 
++/**
++*   Routing table structure definition. Double linked list...
++*/
++struct RouteTable {
++    struct RouteTable   *nextroute;     // Pointer to the next group in line.
++    struct RouteTable   *prevroute;     // Pointer to the previous group in line.
++    uint32_t              group;          // The group to route
++    uint32_t              originAddr;     // The origin adress (only set on activated routes)
++    uint32_t              vifBits;        // Bits representing recieving VIFs.
++
++    uint32_t              src_ip[MAX_SRC_IP];    // Array of Lan src ip in MC group
++    uint32_t              src_ip_timestamp[MAX_SRC_IP];    // record only src_ip report timestamp 
++    uint32_t              src_ip_querytype[MAX_SRC_IP];    // 0: create time  1: general query  2: specific query  3: general query report  4: specific query report
++    // Keeps the upstream membership state...
++    short               upstrState;     // Upstream membership state.
++
++    // These parameters contain aging details.
++    uint32_t              ageVifBits;     // Bits representing aging VIFs.
++    int                 ageValue;       // Downcounter for death.
++    int                 ageActivity;    // Records any acitivity that notes there are still listeners.
++};
++
+ // Defines the Index of the upstream VIF...
+ extern int upStreamVif;
+ 
+@@ -246,10 +277,10 @@
+  */
+ void initRouteTable();
+ void clearAllRoutes();
+-int insertRoute(uint32_t group, int ifx);
++int insertRoute(uint32_t src, uint32_t group, int ifx, int report);
+ int activateRoute(uint32_t group, uint32_t originAddr);
+ void ageActiveRoutes();
+-void setRouteLastMemberMode(uint32_t group);
++void setRouteLastMemberMode(uint32_t src, uint32_t group);
+ int lastMemberGroupAge(uint32_t group);
+ int interfaceInRoute(int32_t group, int Ix);
+ 
+Index: igmpproxy-0.1/src/request.c
+===================================================================
+--- igmpproxy-0.1.orig/src/request.c	2017-08-08 19:31:16.312419311 +0800
++++ igmpproxy-0.1/src/request.c	2017-08-08 19:32:35.880417223 +0800
+@@ -39,6 +39,10 @@
+ 
+ #include "igmpproxy.h"
+ 
++extern struct RouteTable  *routing_table;
++extern struct RouteTable  *findRoute(uint32_t group);
++extern void dump_srcip_array(struct RouteTable *rt);
++
+ // Prototypes...
+ void sendGroupSpecificMemberQuery(void *argument);  
+ 
+@@ -85,7 +89,7 @@
+ 	// If we don't have a whitelist we insertRoute and done
+ 	if(sourceVif->allowedgroups == NULL)
+ 	{
+-	    insertRoute(group, sourceVif->index);
++	    insertRoute(src, group, sourceVif->index, 1);
+ 	    return;
+ 	}
+ 	// Check if this Request is legit on this interface
+@@ -94,7 +98,8 @@
+ 	    if((group & sn->subnet_mask) == sn->subnet_addr)
+ 	    {
+         	// The membership report was OK... Insert it into the route table..
+-        	insertRoute(group, sourceVif->index);
++        	// Chris
++		insertRoute(src, group, sourceVif->index, 1);
+ 		return;
+ 	    }
+ 	my_log(LOG_INFO, 0, "The group address %s may not be requested from this interface. Ignoring.", inetFmt(group, s1));
+@@ -138,12 +143,15 @@
+         gvDesc = (GroupVifDesc*) malloc(sizeof(GroupVifDesc));
+ 
+         // Tell the route table that we are checking for remaining members...
+-        setRouteLastMemberMode(group);
++        // Chris
++	setRouteLastMemberMode(src,group);
+ 
+         // Call the group spesific membership querier...
+         gvDesc->group = group;
+         // gvDesc->vifAddr = sourceVif->InAdr.s_addr;
+-        gvDesc->started = 0;
++        my_log(LOG_INFO, 0, "[acceptLeaveMessage] vifAddr(%s)",
++            inetFmt(sourceVif->InAdr.s_addr,s1));
++	gvDesc->started = 0;
+ 
+         sendGroupSpecificMemberQuery(gvDesc);
+ 
+@@ -162,6 +170,7 @@
+     struct  IfDesc  *Dp;
+     struct  RouteTable  *croute;
+     int     Ix;
++    int     i=0;
+ 
+     // Cast argument to correct type...
+     GroupVifDesc   *gvDesc = (GroupVifDesc*) argument;
+@@ -194,10 +203,66 @@
+                             conf->lastMemberQueryInterval * IGMP_TIMER_SCALE, 
+                             gvDesc->group, 0);
+ 
+-                    my_log(LOG_DEBUG, 0, "Sent membership query from %s to %s. Delay: %d",
++                    my_log(LOG_INFO, 0, "[sendGroupSpecificMemberQuery]Sent membership query from %s to %s. Delay: %d",
+                             inetFmt(Dp->InAdr.s_addr,s1), inetFmt(gvDesc->group,s2),
+                             conf->lastMemberQueryInterval);
+-                }
++                   
++		   // Try to find an existing route for this group...
++    		   croute = findRoute(gvDesc->group);
++
++		   if(croute!=NULL) {
++			for (i=0; i<MAX_SRC_IP; i++)
++			{
++			    int empty_flag=1;
++			    if (croute->src_ip[i] == 0)
++				continue;
++			    else if (croute->src_ip_querytype[i] == 0)
++			    {
++				empty_flag=0;
++				my_log(LOG_INFO, 0,"[sendGroupSpecificMemberQuery] update src_ip[%s] status 1",inetFmt(croute->src_ip[i],s1));
++				croute->src_ip_querytype[i] = SPECIFIC_QUERY;
++				//croute->src_ip_timestamp[i] = time((time_t *)0);
++			    /*}else if ( croute->src_ip_querytype[i] == GENERAL_QUERY_REPORT || croute->src_ip_querytype[i] == SPECIFIC_QUERY_REPORT ){
++				if(time((time_t *)0) - croute->src_ip_timestamp[i] < INTERVAL_QUERY)
++				{
++					empty_flag=0;
++					my_log(LOG_INFO, 0,"[sendGroupSpecificMemberQuery] update src_ip[%s] status 2",inetFmt(croute->src_ip[i],s1));
++					croute->src_ip_querytype[i] = SPECIFIC_QUERY;
++					croute->src_ip_timestamp[i] = time((time_t *)0);	
++			        }else{
++					my_log(LOG_INFO, 0,"[sendGroupSpecificMemberQuery] delete src_ip[%s] 1",inetFmt(croute->src_ip[i],s1));
++					croute->src_ip[i] = 0;
++					croute->src_ip_querytype[i] = 0;
++    					croute->src_ip_timestamp[i] = 0;
++				}*/
++			    }else{
++				if (croute->src_ip_timestamp[i] != 0)
++                                {
++                                        if (time((time_t *)0) - croute->src_ip_timestamp[i] >= GROUP_QUERY_TIMEOUT)
++                                        {
++                                                my_log(LOG_INFO, 0,"[sendGroupSpecificMemberQuery] delete src_ip[%s] ",inetFmt(croute->src_ip[i],s1));
++                                                croute->src_ip[i] = 0;
++                                                croute->src_ip_querytype[i] = 0;
++                                                croute->src_ip_timestamp[i] = 0;
++                                        }else{
++                                                empty_flag=0;
++                                                croute->src_ip_querytype[i] = SPECIFIC_QUERY;
++                                                my_log(LOG_INFO, 0,"[sendGroupSpecificMemberQuery] check and update src_ip[%s] timout ...",inetFmt(croute->src_ip[i],s1));
++                                        	my_log(LOG_INFO, 0,"[sendGroupSpecificMemberQuery] now_general_query_time[%d] last_report_time[%d]", time((time_t *)0), croute->src_ip_timestamp[i] );
++					}
++                                 }
++				
++			    }
++			    my_log(LOG_INFO, 0,"[sendSpecificMembershipQuery] empty_flag[%d]",empty_flag);
++			    if(empty_flag)
++			    {
++                        	sendJoinLeaveUpstream(croute, 0);
++			    	my_log(LOG_INFO, 0,"[sendSpecificMembershipQuery]!!!!!! sendJoinLeaveUpstream !!!!!! ");
++			    }
++			}			
++		    }
++		    //dump_srcip_array(croute);
++		}
+             }
+         }
+     }
+@@ -214,6 +279,8 @@
+     struct  Config  *conf = getCommonConfig();
+     struct  IfDesc  *Dp;
+     int             Ix;
++    struct  RouteTable  *croute;
++    int i = 0;
+ 
+     // Loop through all downstream vifs...
+     for ( Ix = 0; (Dp = getIfByIx(Ix)); Ix++ ) {
+@@ -224,11 +291,65 @@
+                          IGMP_MEMBERSHIP_QUERY,
+                          conf->queryResponseInterval * IGMP_TIMER_SCALE, 0, 0);
+                 
+-                my_log(LOG_DEBUG, 0,
+-			"Sent membership query from %s to %s. Delay: %d",
++                my_log(LOG_INFO, 0,
++			"[sendGeneralMembershipQuery]Sent membership query from %s to %s. Delay: %d",
+ 			inetFmt(Dp->InAdr.s_addr,s1),
+ 			inetFmt(allhosts_group,s2),
+ 			conf->queryResponseInterval);
++	       if(routing_table != NULL) {
++		    for(croute = routing_table; croute; croute = croute->nextroute) 
++		    {
++			int empty_flag=1;
++			my_log(LOG_INFO, 0,"[sendGeneralMembershipQuery] group[%s]",inetFmt(croute->group,s1));
++		    	for (i=0; i<MAX_SRC_IP; i++)
++                    	{
++                        	if (croute->src_ip[i] == 0)
++                            		continue;
++                        	else if (croute->src_ip_querytype[i] == 0)
++                        	{
++					empty_flag=0;
++					my_log(LOG_INFO, 0,"[sendGeneralMembershipQuery] update src_ip[%s] status 1",inetFmt(croute->src_ip[i],s1));
++                            		croute->src_ip_querytype[i] = GENERAL_QUERY;
++                            		//croute->src_ip_timestamp[i] = time((time_t *)0);
++                        	/*}else if ( croute->src_ip_querytype[i] == GENERAL_QUERY_REPORT || croute->src_ip_querytype[i] == SPECIFIC_QUERY_REPORT ){
++                            		if(time((time_t *)0) - croute->src_ip_timestamp[i] < GROUP_QUERY_TIMEOUT)
++                            		{
++						empty_flag=0;
++						my_log(LOG_INFO, 0,"[sendGeneralMembershipQuery] update src_ip[%s] status 2",inetFmt(croute->src_ip[i],s1));
++                                		croute->src_ip_querytype[i] = GENERAL_QUERY;
++                                		//croute->src_ip_timestamp[i] = time((time_t *)0);
++                            		}else{
++						my_log(LOG_INFO, 0,"[sendGeneralMembershipQuery] delete src_ip[%s] 1 ...now_general_query_time[%d] last_report_time[%d]",inetFmt(croute->src_ip[i],s1), time((time_t *)0), croute->src_ip_timestamp[i]);
++                                		croute->src_ip[i] = 0;
++                                		croute->src_ip_querytype[i] = 0;
++                                		croute->src_ip_timestamp[i] = 0;
++                            		}*/
++                        	}else{
++					if (croute->src_ip_timestamp[i] != 0)
++					{
++						if (time((time_t *)0) - croute->src_ip_timestamp[i] >= GROUP_QUERY_TIMEOUT)
++						{
++							my_log(LOG_INFO, 0,"[sendGeneralMembershipQuery] delete src_ip[%s] ",inetFmt(croute->src_ip[i],s1));
++                            				croute->src_ip[i] = 0;
++                            				croute->src_ip_querytype[i] = 0;
++                            				croute->src_ip_timestamp[i] = 0;
++						}else{
++							empty_flag=0;
++							croute->src_ip_querytype[i] = GENERAL_QUERY;
++							my_log(LOG_INFO, 0,"[sendGeneralMembershipQuery] check and update src_ip[%s] timout...",inetFmt(croute->src_ip[i],s1));
++							my_log(LOG_INFO, 0,"[sendGeneralMembershipQuery] now_general_query_time[%d] last_report_time[%d]",time((time_t *)0), croute->src_ip_timestamp[i]);
++						}
++					}
++				}
++                         }
++			 my_log(LOG_INFO, 0,"[sendGeneralMembershipQuery] empty_flag[%d]",empty_flag);
++			 if(empty_flag)
++			 {
++				sendJoinLeaveUpstream(croute, 0);	
++                    	 	my_log(LOG_INFO, 0,"[sendGeneralMembershipQuery]!!!!!! sendJoinLeaveUpstream !!!!!! ");
++			 }
++		     }
++                 }
+             }
+         }
+     }
+Index: igmpproxy-0.1/src/rttable.c
+===================================================================
+--- igmpproxy-0.1.orig/src/rttable.c	2017-08-08 19:31:16.312419311 +0800
++++ igmpproxy-0.1/src/rttable.c	2017-08-08 19:31:16.320419311 +0800
+@@ -38,29 +38,10 @@
+ */
+ 
+ #include "igmpproxy.h"
+-    
+-/**
+-*   Routing table structure definition. Double linked list...
+-*/
+-struct RouteTable {
+-    struct RouteTable   *nextroute;     // Pointer to the next group in line.
+-    struct RouteTable   *prevroute;     // Pointer to the previous group in line.
+-    uint32_t              group;          // The group to route
+-    uint32_t              originAddr;     // The origin adress (only set on activated routes)
+-    uint32_t              vifBits;        // Bits representing recieving VIFs.
+-
+-    // Keeps the upstream membership state...
+-    short               upstrState;     // Upstream membership state.
+-
+-    // These parameters contain aging details.
+-    uint32_t              ageVifBits;     // Bits representing aging VIFs.
+-    int                 ageValue;       // Downcounter for death.          
+-    int                 ageActivity;    // Records any acitivity that notes there are still listeners.
+-};
+ 
+                  
+ // Keeper for the routing table...
+-static struct RouteTable   *routing_table;
++struct RouteTable   *routing_table;
+ 
+ // Prototypes
+ void logRouteTable(char *header);
+@@ -70,6 +51,19 @@
+ // Socket for sending join or leave requests.
+ int mcGroupSock = 0;
+ 
++// for debugging
++void dump_srcip_array(struct RouteTable *rt)
++{
++     int i=0;
++     if (rt != NULL)
++     {
++     	for(i=0; i<MAX_SRC_IP; i++)
++     	{
++             if (rt->src_ip[i] != 0)
++	         my_log(LOG_INFO, 0, "########  [dump_srcip_array] src_ip[%d] = %s src_ip_timestamp[%d] src_ip_querytype[%d]  ########", i, inetFmt(rt->src_ip[i], s1), rt->src_ip_timestamp[i], rt->src_ip_querytype[i]);
++         }
++     }
++}
+ 
+ /**
+ *   Function for retrieving the Multicast Group socket.
+@@ -206,6 +200,9 @@
+ struct RouteTable *findRoute(uint32_t group) {
+     struct RouteTable*  croute;
+ 
++    if (routing_table == NULL)
++        return NULL;
++
+     for(croute = routing_table; croute; croute = croute->nextroute) {
+         if(croute->group == group) {
+             return croute;
+@@ -220,7 +217,7 @@
+ *   If the route already exists, the existing route 
+ *   is updated...
+ */
+-int insertRoute(uint32_t group, int ifx) {
++int insertRoute(uint32_t src, uint32_t group, int ifx, int report) {
+     
+     struct Config *conf = getCommonConfig();
+     struct RouteTable*  croute;
+@@ -251,6 +248,14 @@
+         // Create and initialize the new route table entry..
+         newroute = (struct RouteTable*)malloc(sizeof(struct RouteTable));
+         // Insert the route desc and clear all pointers...
++
++        memset(newroute->src_ip,0,sizeof(newroute->src_ip));
++	memset(newroute->src_ip_timestamp,0,sizeof(newroute->src_ip_timestamp));
++	memset(newroute->src_ip_querytype,0,sizeof(newroute->src_ip_querytype));
++
++	newroute->src_ip[0]  = src;
++	newroute->src_ip_timestamp[0] = time((time_t *)0);
++        newroute->src_ip_querytype[0] = CREATE_TIME;
+         newroute->group      = group;
+         newroute->originAddr = 0;
+         newroute->nextroute  = NULL;
+@@ -324,6 +329,8 @@
+             inetFmt(croute->group, s1),ifx);
+ 
+     } else if(ifx >= 0) {
++	int i = 0;
++        int src_flag=0;	
+ 
+         // The route exists already, so just update it.
+         BIT_SET(croute->vifBits, ifx);
+@@ -331,7 +338,46 @@
+         // Register the VIF activity for the aging routine
+         BIT_SET(croute->ageVifBits, ifx);
+ 
+-        // Log the cleanup in debugmode...
++        // The route exists already, update src_ip array
++        for (i=0; i<MAX_SRC_IP; i++)
++        {
++            if(croute->src_ip[i] == src)
++            {
++                src_flag = 1;
++		// update exist src_ip's report timestamp and query status
++		croute->src_ip_timestamp[i] = time((time_t *)0);
++		if(report)
++                {
++                    croute->src_ip_querytype[i] = GENERAL_QUERY_REPORT;
++                }else{
++                    croute->src_ip_querytype[i] = CREATE_TIME;
++                }
++                break;
++            }
++        }    
++        
++        if(!src_flag)
++        {
++            for (i=0; i<MAX_SRC_IP; i++)
++            {
++                if(croute->src_ip[i] == 0)
++                {
++                    croute->src_ip[i]= src;
++		    // update exist src_ip's report timestamp and query status
++                    croute->src_ip_timestamp[i] = time((time_t *)0);
++		    if(report)
++		    {
++        		croute->src_ip_querytype[i] = GENERAL_QUERY_REPORT;
++		    }else{
++			croute->src_ip_querytype[i] = CREATE_TIME;
++		    }
++		    break;
++                }
++            }
++        }
++        // end
++
++	// Log the cleanup in debugmode...
+         my_log(LOG_INFO, 0, "Updated route entry for %s on VIF #%d",
+             inetFmt(croute->group, s1), ifx);
+ 
+@@ -374,7 +420,7 @@
+ 		inetFmt(group, s1),inetFmt(originAddr, s2));
+ 
+         // Insert route, but no interfaces have yet requested it downstream.
+-        insertRoute(group, -1);
++	insertRoute(0, group, -1, 0);
+ 
+         // Retrieve the route from table...
+         croute = findRoute(group);
+@@ -450,20 +496,55 @@
+ *   Should be called when a leave message is recieved, to
+ *   mark a route for the last member probe state.
+ */
+-void setRouteLastMemberMode(uint32_t group) {
++void setRouteLastMemberMode(uint32_t src, uint32_t group) {
+     struct Config       *conf = getCommonConfig();
+     struct RouteTable   *croute;
++    int i=0;
++    int src_flag=0;
+ 
+     croute = findRoute(group);
+     if(croute!=NULL) {
++	// clean leaved src ip
++        for(i=0; i<MAX_SRC_IP; i++)
++        {
++            if(croute->src_ip[i] == src)
++            {
++                croute->src_ip[i] = 0;
++		croute->src_ip_timestamp[i] = 0;
++		croute->src_ip_querytype[i] = 0;
++		break;
++            }
++        }
++
+         // Check for fast leave mode...
+         if(croute->upstrState == ROUTESTATE_JOINED && conf->fastUpstreamLeave) {
+-            // Send a leave message right away only when the route has been active on only one interface
+-            if (numberOfInterfaces(croute) <= 1) {
++            my_log(LOG_INFO, 0, "====== ROUTESTATE_JOINED && fastUpstreamLeave ======");
++	    // Send a leave message right away only when the route has been active on only one interface
++            /*
++	    if (numberOfInterfaces(croute) <= 1) {
+ 		my_log(LOG_DEBUG, 0, "Leaving group %d now", group);
+                 sendJoinLeaveUpstream(croute, 0);
+             } 
+-        }
++	    */
++	    // check if any src ip is in the group or not
++            if (numberOfInterfaces(croute) <= 1) {
++	    	for(i=0; i<MAX_SRC_IP; i++)
++            	{
++                    if((croute->src_ip[i] != 0) && (croute->src_ip[i] != src))
++                    {
++                     	src_flag=1;
++                     	break;                     
++                    }                              
++            	} 
++            	if (!src_flag)  
++            	{
++                	my_log(LOG_INFO, 0, "######## Leaving group %d now ########", group);
++                	sendJoinLeaveUpstream(croute, 0);
++            	}else{
++			my_log(LOG_INFO, 0, "######## Non-Leaving group %s now ########", inetFmt(group, s1));
++		}
++            }
++	}
+         // Set the routingstate to Last member check...
+         croute->upstrState = ROUTESTATE_CHECK_LAST_MEMBER;
+         // Set the count value for expiring... (-1 since first aging)
+Index: igmpproxy-0.1/src/syslog.c
+===================================================================
+--- igmpproxy-0.1.orig/src/syslog.c	2009-05-14 03:43:18.000000000 +0800
++++ igmpproxy-0.1/src/syslog.c	2017-08-08 19:31:16.320419311 +0800
+@@ -33,7 +33,8 @@
+ 
+ #include "igmpproxy.h"
+ 
+-int LogLevel = LOG_WARNING;
++//int LogLevel = LOG_WARNING;
++int LogLevel = LOG_DEBUG;
+ bool Log2Stderr = false;
+ 
+ void my_log( int Severity, int Errno, const char *FmtSt, ... )

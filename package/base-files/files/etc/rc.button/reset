@@ -1,0 +1,28 @@
+#!/bin/sh
+. /lib/functions.sh
+FILE_CHECK_RESET_LED="/tmp/led_wait_to_reset"
+
+logger "$BUTTON pressed for $SEEN seconds"
+
+if [ "${ACTION}" == "pressed" ]; then
+	echo "[button] Pressed button" > /dev/console
+	echo "1" > /tmp/led_wait_to_reset
+	/etc/rc.button/LED_reset_flicker &
+
+	exit 0
+fi
+
+if [ "${ACTION}" == "released" ]; then
+	echo "[button] Released button" > /dev/console
+	#echo "SEEN   = ${SEEN}" > /dev/console
+	rm -f $FILE_CHECK_RESET_LED
+	killall -9 LED_reset_flicker
+
+	if [ "$SEEN" -gt 5 ]; then
+		echo "[button] Reset to default" > /dev/console
+		/sbin/zyxel_led_ctrl ResetToDefault
+		romreset 1 &
+	fi
+fi
+
+return 0

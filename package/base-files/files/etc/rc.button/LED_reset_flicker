@@ -1,0 +1,14 @@
+#!/bin/sh
+FILE_CHECK_RESET_LED="/tmp/led_wait_to_reset"
+
+#echo "Start to count button_led_flicker"  > /dev/console
+sleep 6
+
+if [ -f $FILE_CHECK_RESET_LED ]; then
+	echo "[button] Set LED ResetToDefault" > /dev/console
+	/sbin/zyxel_led_ctrl ResetToDefault
+fi
+
+rm -f $FILE_CHECK_RESET_LED
+
+exit 0

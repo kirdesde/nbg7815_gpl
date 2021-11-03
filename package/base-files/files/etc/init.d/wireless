@@ -1,0 +1,88 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2006 OpenWrt.org
+
+START=41
+STOP=41
+
+. /lib/functions.sh
+include /lib/config
+
+start() {
+	## to prevent the wireless config ruined after wireless crash
+	chk_wirelessconfig=$(uci show wireless | grep ath13 | wc -l)
+	chk_wps5G=$(uci show wps5G | wc -l)
+	[ -f "/etc/bakconfig/wireless" ] && {
+		[ "$chk_wirelessconfig" -gt 30 ] || cp /etc/bakconfig/wireless /etc/config/
+		[ "$chk_wps5G" -gt 3 ] || cp /rom/etc/config/wps5G /etc/config/
+		sleep 1
+		## double check again
+		double_chk=$(uci show wireless | grep ath13 | wc -l)
+		[ "$double_chk" -gt 30 ] || cp /rom/etc/config/wireless /etc/config/
+	}
+
+	## get the wlan HW button status to know boot on wireless or not
+	wifi_disable=$(uci get wireless.wifi0.disabled)
+	wifi5G_disable=$(uci get wireless.wifi1.disabled)
+
+	if [ "$wifi_disable" == "0" ] || [ "$wifi5G_disable" == "0" ]; then
+		/sbin/wifi up
+	fi
+
+	echo "" > /tmp/atf_reloaded
+	/bin/atf start
+}
+
+restart() {
+	## for link_monitor flag, its for fixing 5G Radio can't emit beacon after rebooting DUT
+	rm /tmp/chkflag
+
+	##To off LED asap after disabled WiFi
+	###/sbin/zyxel_led_ctrl all
+	device=$(cat /tmp/WirelessDev)
+	band24G=$(cat /tmp/wifi24G_Apply)
+	band5G=$(cat /tmp/wifi5G_Apply)
+	band5G_2=$(cat /tmp/wifi5G_2_Apply)
+
+	if [ "$device" == "wifi0" ] ; then
+		echo "wifi0" > /tmp/atf_reloaded
+	fi
+	if [ "$device" == "wifi1" ] ; then
+		echo "wifi1" > /tmp/atf_reloaded
+	fi
+	if [ "$device" == "" ] ; then
+		echo "" > /tmp/atf_reloaded
+	fi
+
+	/bin/WiFi_init CHANNEL
+
+	if [ "$device" == "wifi0" ] || [ "$device" == "wifi1" ]; then
+		wifi_disable=$(uci get wireless.$device.disabled)
+		if [ "$wifi_disable" == "0" ]; then
+			/sbin/wifi up $device
+		else
+			rm /tmp/wifi24G_Apply /tmp/wifi5G_Apply
+			/sbin/wifi down $device
+		fi
+	else
+		/sbin/wifi up
+	fi
+
+	/bin/atf restart
+
+	rm /tmp/WirelessDev
+
+	##For WSQ20
+#	/sbin/WiFi_HW_threshold
+	
+	##to prevent the wireless config ruined after wireless crash
+	cp /etc/config/wireless /etc/bakconfig/
+
+	/etc/init.d/hyd restart
+}
+
+stop() {
+	/sbin/wifi down
+
+	## for fixing 5G radio can't emit beacon after rebooting DUT.
+	sleep 1
+}

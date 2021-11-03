@@ -1,0 +1,11 @@
+--- a/send.c	2017-10-19 14:22:52.647620400 +0800
++++ b/send.c	2017-10-19 14:24:11.581837380 +0800
+@@ -509,6 +509,8 @@
+ 					} else {
+ 						IsAnyPrefixEnable = 1;
+ 					}
++				}else{
++					IsAnyPrefixEnable = 1;
+ 				}
+ 				pinfo->nd_opt_pi_valid_time	= htonl(prefix->curr_validlft);
+ 				pinfo->nd_opt_pi_preferred_time = htonl(prefix->curr_preferredlft);

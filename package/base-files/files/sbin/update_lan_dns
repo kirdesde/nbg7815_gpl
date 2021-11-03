@@ -1,0 +1,292 @@
+#!/bin/sh
+
+. /lib/functions.sh
+include /lib/config
+
+#get some info from config file
+op_lanDns=$(uci_get dhcp lan lan_dns)
+lan_IP=$(uci_get network lan ipaddr)
+guest_lan1_IP=$(uci_get network guest ipaddr)
+guest_lan2_IP=$(uci_get network visitor ipaddr)
+guest_lan3_IP=$(uci get wireless.ath3.guest_ip)
+
+#get separate three lan dns resource 
+op1=$(echo $op_lanDns | awk -F"," '{print $1}')
+op2=$(echo $op_lanDns | awk -F"," '{print $2}')
+op3=$(echo $op_lanDns | awk -F"," '{print $3}')
+
+#get wan dns info by parsing /tmp/resolving.conf.auto
+w_dns1=""
+w_dns2=""
+w_dns3=""
+
+#distinguish the getting address is ipv4 or ipv6.
+isipv6(){
+	local tst=$(echo $1 |grep ":")
+	[ -n "$tst" ] && printf "1" || printf "0"
+}
+
+count=1
+while read line
+do
+	express=$(echo $line | grep "nameserver")
+	#echo "$line"
+	if [ "$express" != "" ]; then
+		if [ "$count" == "1" ]; then
+			w_dns1_tmp=$(echo $express | awk -F" " '{print $2}')
+			res=$(isipv6 $w_dns1_tmp)
+			if [ "$res" != "1" ]; then
+				w_dns1="$w_dns1_tmp"
+			fi
+		fi
+		if [ "$count" == "2" ]; then
+			w_dns2_tmp=$(echo $express | awk -F" " '{print $2}')
+			res=$(isipv6 $w_dns2_tmp)
+			if [ "$res" != "1" ]; then
+				w_dns2="$w_dns2_tmp"
+			fi
+		fi
+		if [ "$count" == "3" ]; then
+			w_dns3_tmp=$(echo $express | awk -F" " '{print $2}')
+			res=$(isipv6 $w_dns3_tmp)
+			if [ "$res" != "1" ]; then
+				w_dns3="$w_dns3_tmp"
+			fi
+		fi
+		count=$(($count+1))
+	fi
+done < /tmp/resolv.conf.auto
+if [ "$w_dns1" == "$w_dns2" ]; then
+	w_dns2=""
+fi
+if [ "$w_dns1" == "$w_dns3" ]; then
+	w_dns3=""
+fi
+if [ "$w_dns2" == "$w_dns3" ]; then
+	w_dns3=""
+fi
+if [ "$w_dns2" == "" ]; then
+	if [ "$w_dns3" != "" ]; then
+		w_dns2="$w_dns3"
+		w_dns3=""
+	fi
+fi
+#decide three lan dns info
+option6=""
+option6_guest_lan1=""
+option6_guest_lan2=""
+option6_guest_lan3=""
+
+for op in $op1 $op2 $op3
+do
+	if [ "$op" == "FromISP" ]; then
+		if [ "$w_dns1" != "" ]; then
+			if [ "$option6" == "" ]; then
+				option6=$w_dns1
+				option6_guest_lan1=$w_dns1
+				option6_guest_lan2=$w_dns1
+				option6_guest_lan3=$w_dns1
+			else
+				option6="$option6,$w_dns1"
+				option6_guest_lan1="$option6_guest_lan1,$w_dns1"
+				option6_guest_lan2="$option6_guest_lan2,$w_dns1"
+				option6_guest_lan3="$option6_guest_lan3,$w_dns1"	
+			fi
+			w_dns1=""
+		elif [ "$w_dns2" != "" ]; then
+			option6="$option6,$w_dns2"
+			option6_guest_lan1="$option6_guest_lan1,$w_dns2"
+			option6_guest_lan2="$option6_guest_lan2,$w_dns2"
+			option6_guest_lan3="$option6_guest_lan3,$w_dns2"
+			w_dns2=""
+		elif [ "$w_dns3" != "" ]; then
+			option6="$option6,$w_dns3"
+			option6_guest_lan1="$option6_guest_lan1,$w_dns3"
+			option6_guest_lan2="$option6_guest_lan2,$w_dns3"
+			option6_guest_lan3="$option6_guest_lan3,$w_dns3"
+			w_dns3=""
+		else
+			echo "no more available dns servers !"
+		fi
+	elif [ "$op" == "None" ]; then 
+		echo "dns_type$i is none, don't do anything"
+	elif [ "$op" == "dnsRelay" ]; then
+		if [ "$lan_IP" != "" ]; then
+			if [ "$option6" == "" ]; then
+				option6=$lan_IP
+				option6_guest_lan1=$guest_lan1_IP
+				option6_guest_lan2=$guest_lan2_IP
+				option6_guest_lan3=$guest_lan3_IP
+			else
+				option6="$option6,$lan_IP"
+				option6_guest_lan1="$option6_guest_lan1,$guest_lan1_IP"
+				option6_guest_lan2="$option6_guest_lan2,$guest_lan2_IP"
+				option6_guest_lan3="$option6_guest_lan3,$guest_lan3_IP"	
+			fi
+		fi
+	else
+		if [ "$op" != "" ]; then
+			if [ "$option6" == "" ]; then
+				option6=$op
+				option6_guest_lan1=$op
+				option6_guest_lan2=$op
+				option6_guest_lan3=$op
+			else
+				option6="$option6,$op"
+				option6_guest_lan1="$option6_guest_lan1,$op"
+				option6_guest_lan2="$option6_guest_lan2,$op"
+				option6_guest_lan3="$option6_guest_lan3,$op"	
+			fi
+		fi
+	fi
+done
+
+lan_domainName=$(uci_get system main domain_name)
+
+	cat <<EOF > /tmp/dnsmasq.conf
+# filter what we send upstream
+# domain-needed
+# bogus-priv
+# filterwin2k
+localise-queries
+
+# allow /etc/hosts and dhcp lookups via *.lan
+local=/lan/
+expand-hosts
+resolv-file=/tmp/resolv.conf.auto
+
+dhcp-authoritative
+dhcp-leasefile=/tmp/dhcp.leases
+
+# use /etc/ethers for static hosts; same format as --dhcp-host
+# <hwaddr> <ipaddr>
+read-ethers
+
+# This will tell DHCP clients to not ask for proxy information
+# Some clients, like Windows 7, will constantly ask if not told NO
+dhcp-option=252,
+
+# other useful options:
+# default route(s): dhcp-option=3,192.168.1.1,192.168.1.2
+#    dns server(s): dhcp-option=6,192.168.1.1,192.168.1.2
+#    dns server(s): dhcp-option=6,192.168.1.1,192.168.1.2
+EOF
+
+[ -n "$lan_domainName" ] && echo "domain=$lan_domainName" >> /tmp/dnsmasq.conf
+
+if [ -n "$option6" ]; then
+	echo "dhcp-option=6,$option6" >> /tmp/dnsmasq.conf
+else
+	echo "dhcp-option=6" >> /tmp/dnsmasq.conf
+fi
+
+	cat <<EOF > /tmp/dnsmasq_guest_lan1.conf
+# filter what we send upstream
+# domain-needed
+# bogus-priv
+# filterwin2k
+localise-queries
+
+# allow /etc/hosts and dhcp lookups via *.lan
+local=/lan/
+expand-hosts
+resolv-file=/tmp/resolv.conf.auto
+
+dhcp-authoritative
+dhcp-leasefile=/tmp/dhcp_guest_lan1.leases
+
+# use /etc/ethers for static hosts; same format as --dhcp-host
+# <hwaddr> <ipaddr>
+read-ethers
+
+# This will tell DHCP clients to not ask for proxy information
+# Some clients, like Windows 7, will constantly ask if not told NO
+dhcp-option=252,
+
+# other useful options:
+# default route(s): dhcp-option=3,192.168.1.1,192.168.1.2
+#    dns server(s): dhcp-option=6,192.168.1.1,192.168.1.2
+#    dns server(s): dhcp-option=6,192.168.1.1,192.168.1.2
+EOF
+
+[ -n "$lan_domainName" ] && echo "domain=$lan_domainName" >> /tmp/dnsmasq_guest_lan1.conf
+
+if [ -n "$option6_guest_lan1" ]; then
+	echo "dhcp-option=6,$option6_guest_lan1" >> /tmp/dnsmasq_guest_lan1.conf
+else
+	echo "dhcp-option=6" >> /tmp/dnsmasq_guest_lan1.conf
+fi
+
+	cat <<EOF > /tmp/dnsmasq_guest_lan2.conf
+# filter what we send upstream
+# domain-needed
+# bogus-priv
+# filterwin2k
+localise-queries
+
+# allow /etc/hosts and dhcp lookups via *.lan
+local=/lan/
+expand-hosts
+resolv-file=/tmp/resolv.conf.auto
+
+dhcp-authoritative
+dhcp-leasefile=/tmp/dhcp_guest_lan2.leases
+
+# use /etc/ethers for static hosts; same format as --dhcp-host
+# <hwaddr> <ipaddr>
+read-ethers
+
+# This will tell DHCP clients to not ask for proxy information
+# Some clients, like Windows 7, will constantly ask if not told NO
+dhcp-option=252
+
+# other useful options:
+# default route(s): dhcp-option=3,192.168.1.1,192.168.1.2
+#    dns server(s): dhcp-option=6,192.168.1.1,192.168.1.2
+#    dns server(s): dhcp-option=6,192.168.1.1,192.168.1.2
+EOF
+
+[ -n "$lan_domainName" ] && echo "domain=$lan_domainName" >> /tmp/dnsmasq_guest_lan2.conf
+
+if [ -n "$option6_guest_lan2" ]; then
+	echo "dhcp-option=6,$option6_guest_lan2" >> /tmp/dnsmasq_guest_lan2.conf
+else
+	echo "dhcp-option=6" >> /tmp/dnsmasq_guest_lan2.conf
+fi
+
+	cat <<EOF > /tmp/dnsmasq_guest_lan3.conf
+# filter what we send upstream
+# domain-needed
+# bogus-priv
+# filterwin2k
+localise-queries
+
+# allow /etc/hosts and dhcp lookups via *.lan
+local=/lan/
+expand-hosts
+resolv-file=/tmp/resolv.conf.auto
+
+dhcp-authoritative
+dhcp-leasefile=/tmp/dhcp_guest_lan3.leases
+
+# use /etc/ethers for static hosts; same format as --dhcp-host
+# <hwaddr> <ipaddr>
+read-ethers
+
+# This will tell DHCP clients to not ask for proxy information
+# Some clients, like Windows 7, will constantly ask if not told NO
+dhcp-option=252,
+
+# other useful options:
+# default route(s): dhcp-option=3,192.168.1.1,192.168.1.2
+#    dns server(s): dhcp-option=6,192.168.1.1,192.168.1.2
+#    dns server(s): dhcp-option=6,192.168.1.1,192.168.1.2
+EOF
+
+[ -n "$lan_domainName" ] && echo "domain=$lan_domainName" >> /tmp/dnsmasq_guest_lan3.conf
+
+if [ -n "$option6_guest_lan3" ]; then
+	echo "dhcp-option=6,$option6_guest_lan3" >> /tmp/dnsmasq_guest_lan3.conf
+else
+	echo "dhcp-option=6" >> /tmp/dnsmasq_guest_lan3.conf
+fi

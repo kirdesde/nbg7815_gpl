@@ -1,0 +1,360 @@
+diff -ruN a/src/igmp.c b/src/igmp.c
+--- a/src/igmp.c	2009-05-14 03:43:18.000000000 +0800
++++ b/src/igmp.c	2014-11-17 18:01:08.741184054 +0800
+@@ -43,6 +43,227 @@
+               
+ extern int MRouterFD;
+ 
++#if defined(ZYXEL_IGMP_STATUS)
++
++void console_printf(char *str)
++{
++	return;
++	FILE *fp;
++	fp = fopen("/dev/console", "w");
++	if (fp == NULL) 
++	{
++		return;
++	}
++	fprintf(fp, "*****%s\r\n", str);
++	fflush(fp);
++	fclose(fp);
++}
++char kkk[512];
++
++igmp_db_data *igmp_db_header = NULL;
++uint16_t igmp_num = 0;
++
++int write_igmp_data (void)
++{
++	console_printf("=====write_igmp_data");
++	
++	FILE *fh;
++	igmp_db_data *pnode ,*temp;	
++	char tmpBuf[256];
++
++	fh=fopen("/tmp/igmp.data","w+");
++	if(fh)
++	{
++		if(igmp_db_header==NULL)
++		{
++			console_printf("=====igmp_db_header==NULL");
++			return 0;
++		}
++		else
++		{
++			pnode = igmp_db_header;
++			while(pnode != NULL)
++			{
++				sprintf(tmpBuf, "%d,%s,%s,%d,%d\n",pnode->igmp_type,inetFmt(pnode->ip_index, s1),pnode->time ,pnode->join,pnode->leave );
++				fprintf(fh,tmpBuf);
++				sprintf(kkk, "===%d   %s   %s   %d    %d\n",pnode->igmp_type,inetFmt(pnode->ip_index, s1),pnode->time ,pnode->join,pnode->leave );
++				console_printf(kkk);
++				pnode = pnode->next;				
++			}
++		}
++		sprintf(tmpBuf, "NUMBER=%d\n",igmp_num);
++		fprintf(fh,tmpBuf);
++		fclose(fh);
++	}
++	console_printf("=====write_igmp_data   end");
++	return 1;
++}
++
++void igmp_db_release(void)
++{
++	console_printf("=========  igmp_db_release  ");
++	
++	igmp_db_data *pnode ,*temp;
++
++
++	if(igmp_db_header==NULL)
++	{
++		return ;
++	}
++	else
++	{
++		pnode = igmp_db_header;
++		while(pnode != NULL)
++		{
++			temp = pnode->next;
++			free(pnode);
++			pnode =temp;
++		}
++		igmp_db_header = NULL;
++	}
++	igmp_num = 0;
++	return ;
++}
++
++
++void igmp_db_add(unsigned short igmp_type, uint32_t ip_index ,int direction)
++{
++	sprintf(kkk, "=========  igmp_db_add  igmp_type=%d  ip_index=%s  direction=%d ",igmp_type, inetFmt(ip_index, s1) ,direction);
++	console_printf(kkk);
++	igmp_db_data *pnode ,*pnode2, *pnode3;
++	struct tm tmm;
++	unsigned int t1,t2;
++
++	if(igmp_db_header==NULL)
++	{
++		console_printf("=========  igmp_db_add  igmp_db_header==NULL");
++		igmp_db_data *temp ;
++		temp = (igmp_db_data *)malloc(sizeof(igmp_db_data));
++		MZERO(temp,sizeof(igmp_db_data));
++
++		temp->ip_index = ip_index;
++			
++		temp->time2 = time((time_t *)0);
++		tmm = *localtime(&temp->time2);
++		MZERO(temp->time,sizeof(temp->time));
++		sprintf(temp->time,"%d-%d-%d %d:%d:%d", tmm.tm_year + 1900, tmm.tm_mon + 1, tmm.tm_mday, tmm.tm_hour, tmm.tm_min, tmm.tm_sec);
++
++		if(direction==1)
++		{
++			temp->join = 1;
++			temp->leave = 0;
++		}
++		else
++		{
++			temp->join = 0;
++			temp->leave = 1;
++		}
++		
++		temp->igmp_type = igmp_type;
++		temp->next = NULL;
++
++		igmp_db_header = temp;
++		igmp_num++;
++		write_igmp_data();
++		return ;
++	}
++
++	pnode = igmp_db_header;
++	t1 = 0;
++	t2 = 0;
++	while(pnode != NULL)
++	{
++		if((pnode->ip_index == ip_index) && (pnode->igmp_type == igmp_type))
++		{
++			t1 = pnode->join;
++			t2 = pnode->leave;
++			
++			sprintf(kkk, "=========  Remove  igmp_type=%d  ip_index=%s  ",igmp_type, inetFmt(ip_index, s1) );
++			console_printf(kkk);	
++
++			if((igmp_db_header->ip_index == ip_index) && (igmp_db_header->igmp_type == igmp_type))
++			{
++				console_printf("=========  Remove igmp_db_header " );
++				pnode2 = igmp_db_header->next;
++				free(igmp_db_header);
++				igmp_db_header = pnode2;
++				pnode = igmp_db_header;
++			}
++			else
++			{
++				console_printf("=========  Remove not igmp_db_header " );
++				pnode3->next = pnode->next;
++				free(pnode);
++				pnode = pnode3;
++			}
++			igmp_num--;
++			break;
++		}
++		
++		if(pnode->next == NULL)
++		{
++			break;
++		}
++		else
++		{
++			pnode3 = pnode;
++			pnode = pnode->next;
++		}
++	}
++
++	igmp_db_data *igmp_node ;
++	igmp_node = (igmp_db_data *)malloc(sizeof(igmp_db_data));
++	MZERO(igmp_node,sizeof(igmp_db_data));
++
++
++	igmp_node->ip_index = ip_index;
++	
++	igmp_node->time2 = time((time_t *)0);
++	tmm = *localtime(&igmp_node->time2);
++	MZERO(igmp_node->time,sizeof(igmp_node->time));
++	sprintf(igmp_node->time,"%d-%d-%d %d:%d:%d", tmm.tm_year + 1900, tmm.tm_mon + 1, tmm.tm_mday, tmm.tm_hour, tmm.tm_min, tmm.tm_sec);
++	
++	if(direction==1)
++	{
++		igmp_node->join = t1 + 1;
++		igmp_node->leave = t2;
++	}
++	else
++	{
++		igmp_node->join = t1;
++		igmp_node->leave = t2+1;
++	}
++	
++	igmp_node->igmp_type = igmp_type;
++	igmp_node->next = NULL;
++
++	if(pnode == NULL)
++	{
++		igmp_db_header = igmp_node;
++	}
++	else
++	{
++		while(pnode->next != NULL)
++		{
++			pnode = pnode->next;
++		}
++		pnode->next = igmp_node;
++	}
++	
++	igmp_num++;
++	
++	if(igmp_num > IGMP_MAX)
++	{
++		pnode2 = igmp_db_header->next;
++		free(igmp_db_header);
++		igmp_db_header = pnode2;
++		igmp_num--;
++	}	
++	write_igmp_data();
++	return ;
++}
++#endif
++
+ /*
+  * Open and initialize the igmp socket, and fill in the non-changing
+  * IP header fields in the output packet buffer.
+@@ -177,6 +398,26 @@
+     my_log(LOG_NOTICE, 0, "RECV %s from %-15s to %s",
+         igmpPacketKind(igmp->igmp_type, igmp->igmp_code),
+         inetFmt(src, s1), inetFmt(dst, s2) );
++	
++#if defined(ZYXEL_IGMP_STATUS)
++	
++    switch (igmp->igmp_type) 
++    {
++		case IGMP_MEMBERSHIP_QUERY: 
++			break;
++		case IGMP_V1_MEMBERSHIP_REPORT:  
++			igmp_db_add(IGMP_LAN_HOST,src , 1);
++			break;
++		case IGMP_V2_MEMBERSHIP_REPORT:
++			igmp_db_add(IGMP_LAN_HOST,src , 1);
++			break;
++		case IGMP_V2_LEAVE_GROUP:
++			igmp_db_add(IGMP_LAN_HOST,src , 0);
++			break;
++		default:
++		    	break;
++    }
++#endif
+ 
+     switch (igmp->igmp_type) {
+     case IGMP_V1_MEMBERSHIP_REPORT:
+diff -ruN a/src/igmpproxy.c b/src/igmpproxy.c
+--- a/src/igmpproxy.c	2009-08-28 03:32:28.000000000 +0800
++++ b/src/igmpproxy.c	2014-11-17 17:17:00.877831787 +0800
+@@ -54,6 +54,11 @@
+ void    igmpProxyCleanUp();
+ void    igmpProxyRun();
+ 
++#if defined(ZYXEL_IGMP_STATUS)
++extern void console_printf(char *str);
++extern void igmp_db_release(void);
++#endif   
++
+ // Global vars...
+ static int sighandled = 0;
+ #define	GOT_SIGINT	0x01
+@@ -132,6 +137,9 @@
+ 
+     } while ( false );
+ 
++#if defined(ZYXEL_IGMP_STATUS)
++	igmp_db_release();
++#endif      
+     // Inform that we are exiting.
+     my_log(LOG_INFO, 0, "Shutdown complete....");
+ 
+diff -ruN a/src/igmpproxy.h b/src/igmpproxy.h
+--- a/src/igmpproxy.h	2009-10-06 02:19:26.000000000 +0800
++++ b/src/igmpproxy.h	2014-11-17 17:47:00.713284879 +0800
+@@ -277,3 +277,37 @@
+ char* getCurrentConfigToken();
+ 
+ 
++#if defined(ZYXEL_IGMP_STATUS)
++
++#define MZERO(x,y) memset(x,0,y)
++#define FAILURE -1
++#define SUCCESS   1 
++#define IGMP_MULTICAST_GROUP 1
++#define IGMP_LAN_HOST 2
++#define IGMP_MAX 256
++
++typedef struct timer_event_t timer_event_t;
++struct timer_event_t {
++	time_t timestamp;
++	time_t min_timestamp;
++	void (*handler) (void *_data);
++	void *data;
++	short disable;
++	timer_event_t *next;
++};
++
++typedef struct igmp_db_data igmp_db_data;
++struct igmp_db_data
++{
++	unsigned short igmp_type;	
++	uint32_t ip_index;
++	char time[64];
++	time_t time2;
++	unsigned int   join;
++	unsigned int   leave;
++
++	igmp_db_data *next;
++
++};
++#endif
++
+diff -ruN a/src/mcgroup.c b/src/mcgroup.c
+--- a/src/mcgroup.c	2009-05-14 03:43:18.000000000 +0800
++++ b/src/mcgroup.c	2014-11-17 17:18:05.935225658 +0800
+@@ -37,6 +37,9 @@
+ 
+ #include "igmpproxy.h"
+        
++#if defined(ZYXEL_IGMP_STATUS)
++extern void igmp_db_add(unsigned short igmp_type, uint32_t ip_index ,int direction);
++#endif
+ 
+ /**
+ *   Common function for joining or leaving a MCast group.
+@@ -73,6 +76,11 @@
+ *   @return 0 if the function succeeds, 1 if parameters are wrong or the join fails
+ */
+ int joinMcGroup( int UdpSock, struct IfDesc *IfDp, uint32_t mcastaddr ) {
++	
++#if defined(ZYXEL_IGMP_STATUS)
++	igmp_db_add(IGMP_MULTICAST_GROUP ,mcastaddr , 1);
++#endif
++
+     return joinleave( 'j', UdpSock, IfDp, mcastaddr );
+ }
+ 
+@@ -82,5 +90,10 @@
+ *   @return 0 if the function succeeds, 1 if parameters are wrong or the join fails
+ */
+ int leaveMcGroup( int UdpSock, struct IfDesc *IfDp, uint32_t mcastaddr ) {
++	
++#if defined(ZYXEL_IGMP_STATUS)
++	igmp_db_add(IGMP_MULTICAST_GROUP,mcastaddr , 0);
++#endif
++
+     return joinleave( 'l', UdpSock, IfDp, mcastaddr );
+ }

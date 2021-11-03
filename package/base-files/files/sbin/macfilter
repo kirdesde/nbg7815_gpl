@@ -1,0 +1,65 @@
+#!/bin/sh
+cfg="wireless_macfilter"
+
+##FOR NBG7815
+DEV24G_LIST="ath0" # "ath0 ath1 ath4 ath5" # main, guess, visitor, visitor(OWE)
+DEV5GLOW_LIST="ath10" # "ath10 ath11 ath14 ath15" # main, guess, visitor, visitor(OWE)
+#DEV5GHIGH_LIST="ath22" # "ath22 ath23 ath24 ath25" # main, guess, visitor, visitor(OWE)
+
+start_macFilter() {
+	# $1 : wifi interface
+	local iface_list
+	if [ "$1" = "wifi1" ]; then
+		iface_list="$DEV24G_LIST"
+	elif [ "$1" = "wifi0" ]; then
+		iface_list="$DEV5GLOW_LIST"
+	fi
+
+	local filter_action="$(uci get $cfg.$1.filter_action)"
+	local mac_list="$(uci get $cfg.$1.mac | sed 's/\([0-9a-fA-F]\{2\}\)/\1:/g;s/\(: \)/ /g;s/:$//')"
+	for iface in $iface_list
+	do
+		iwpriv "$iface" maccmd 3 #clear_acl_table
+		iwpriv "$iface" maccmd "$filter_action" #set acl table policy
+		add_acl_table_and_kickmac "$iface" "$mac_list" "$filter_action"
+	done
+}
+
+add_acl_table_and_kickmac() {
+	local iface=$1 #iface, ex: ath0, ath1, ath10, etc..
+	local mac_list=$2
+	local filter_action=$3
+
+	for mac in $mac_list
+	do
+		iwpriv $iface addmac $mac
+		if [ "$filter_action" = "2" ]; then ### Kick current Deny User from maclist of config (Deny mode) ###
+			iwpriv "$iface" kickmac "$mac"
+		fi
+	done
+
+	if [ "$filter_action" = "1" ]; then ### Kick current Deny User that it doesn't exist in config maclist (Allow mode) ###
+		rm /tmp/log_macfilter
+		wlanconfig "$iface" list | awk '{print $1}' | grep -o -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}' > /tmp/log_macfilter
+		while IFS= read -r LINE
+		do
+			local match="$(echo $mac_list | grep $LINE)" #mac_list(allow list), LINE(client is connecting to DUT)
+			if [ -z "$match" ]; then
+				iwpriv "$iface" kickmac "$LINE"
+			fi
+		done < /tmp/log_macfilter
+	fi
+}
+
+case $1 in
+	wifi0|wifi1)
+		start_macFilter $1
+	;;
+	all)
+		start_macFilter "wifi0"
+		start_macFilter "wifi1"
+	;;
+	*)
+		echo "$0 <wifi0|wifi1|all>"
+	;;
+esac

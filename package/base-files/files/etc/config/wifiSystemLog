@@ -1,0 +1,2 @@
+config wifiSystemLog general
+        option enable 1

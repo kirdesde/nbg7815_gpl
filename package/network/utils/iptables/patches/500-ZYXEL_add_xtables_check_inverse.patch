@@ -1,0 +1,49 @@
+--- a/include/xtables.h	2015-11-17 13:05:32.589809413 +0800
++++ b/include/xtables.h	2015-11-17 10:30:40.857470980 +0800
+@@ -453,6 +453,8 @@
+ /* this is a special 64bit data type that is 8-byte aligned */
+ #define aligned_u64 u_int64_t __attribute__((aligned(8)))
+ 
++int xtables_check_inverse(const char option[], int *invert,
++        int *my_optind, int argc, char **argv);
+ extern struct xtables_globals *xt_params;
+ #define xtables_error (xt_params->exit_err)
+ 
+--- a/libxtables/xtables.c	2013-11-22 19:18:13.000000000 +0800
++++ b/libxtables/xtables.c	2015-11-17 10:28:56.177467490 +0800
+@@ -1867,6 +1867,35 @@
+ 	}
+ }
+ 
++/**
++ * Check for option-intrapositional negation.
++ * Do not use in new code.
++ */
++int xtables_check_inverse(const char option[], int *invert,
++                          int *my_optind, int argc, char **argv)
++{
++        if (option == NULL || strcmp(option, "!") != 0)
++                return false;
++
++        fprintf(stderr, "Using intrapositioned negation "
++                "(`--option ! this`) is deprecated in favor of "
++                "extrapositioned (`! --option this`).\n");
++
++        if (*invert)
++                xt_params->exit_err(PARAMETER_PROBLEM,
++                           "Multiple `!' flags not allowed");
++        *invert = true;
++        if (my_optind != NULL) {
++                optarg = argv[*my_optind];
++                ++*my_optind;
++                if (argc && *my_optind > argc)
++                        xt_params->exit_err(PARAMETER_PROBLEM,
++                                   "no argument following `!'");
++        }
++
++        return true;
++}
++
+ const struct xtables_pprot xtables_chain_protos[] = {
+ 	{"tcp",       IPPROTO_TCP},
+ 	{"sctp",      IPPROTO_SCTP},

@@ -1,0 +1,273 @@
+#!/bin/sh
+. /etc/functions.sh
+include /lib/config
+
+iptables(){
+	/usr/sbin/iptables -w "$@"
+}
+
+lock /tmp/.order_filter.lock
+
+proto=$(uci_get network wan proto)
+if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+	WAN="$proto"-wan
+else
+	WAN=$(uci_get network wan ifname)
+fi
+LAN="br-lan"
+
+dos_enable=$(uci_get firewall general dos_enable)
+nat_enable=$(uci_get nat general nat)
+upnp_enable=$(uci_get upnpd config enabled)
+icmp_ping=$(uci_get firewall general pingEnabled)
+parental_enable=$(uci_get parental general enable)
+firewall_enable=$(uci_get firewall general filterEnabled)
+sessions_user=$(uci_get nat general sessions_user)
+igmpproxy_enable=$(uci_get igmpproxy general igmpEnabled)
+spi_enable=$(uci_get firewall general spi_enable)
+
+## reload icmp ping
+iptables -D INPUT -p icmp -j input_icmp
+iptables -D FORWARD -p icmp -j forwarding_icmp
+
+### insert ping filter on FORWARD chain (firewall need to be prior to icmp ping filter)
+iptables -I FORWARD -p icmp -j forwarding_icmp
+
+## reload NAT related
+iptables -D FORWARD -j forwarding_rule_nat 2>/dev/null
+iptables -D FORWARD -j forwarding_rule_porttrigger 2>/dev/null
+iptables -t nat -D PREROUTING -j prerouting_rule_porttrigger 2>/dev/null
+iptables -D FORWARD -j forwarding_rule_dmz
+
+if [ "$nat_enable" == "enable" ]; then
+	iptables -I FORWARD -j forwarding_rule_nat 2>/dev/null
+	iptables -I FORWARD -j forwarding_rule_porttrigger 2>/dev/null
+	iptables -t nat -I PREROUTING -j prerouting_rule_porttrigger 2>/dev/null
+fi
+
+## reload firewall chain (firewall need to be prior to icmp ping filter)
+iptables -D INPUT -j input_rule 2>/dev/null
+iptables -D OUTPUT -j output_igmp 2>/dev/null
+iptables -D FORWARD -j forwarding_rule_filter 2>/dev/null
+
+if [ "$firewall_enable" == "1" ]; then
+#	iptables -A INPUT -j input_rule
+	iptables -I FORWARD -j forwarding_rule_filter
+	iptables -A OUTPUT -j output_igmp
+fi
+
+## reload parental control
+[ -f "/sbin/parental_iptable.sh" ] && /sbin/parental_iptable.sh boot
+
+## reload profile_daily_limit
+[ -f "/usr/sbin/profile_daily_limit.sh" ] && /usr/sbin/profile_daily_limit.sh boot
+
+## reload firewall_blockdevice chain
+iptables -D INPUT -j blockdevice_input_rule 2>/dev/null
+iptables -D FORWARD -j blockdevice_filter 2>/dev/null
+
+if [ "$firewall_enable" == "1" ]; then
+#	iptables -A INPUT -j blockdevice_input_rule
+	iptables -I FORWARD -j blockdevice_filter
+fi
+
+##  insert xmpp-agent chain
+iptables -N xmpp_server_list
+iptables -D FORWARD -j xmpp_server_list 2>/dev/null
+iptables -I FORWARD -j xmpp_server_list
+
+## reload upnp 
+iptables -D FORWARD -i $WAN ! -o $WAN -j MINIUPNPD
+iptables -t nat -D PREROUTING -i $WAN -j MINIUPNPD
+iptables -t nat -D POSTROUTING -o $WAN -j MINIUPNPD-POSTROUTING
+iptables -t mangle -D PREROUTING -i $WAN -j MINIUPNPD
+if [ "$upnp_enable" == "1" ]; then
+	iptables -A FORWARD -i $WAN ! -o $WAN -j MINIUPNPD
+	iptables -t nat -I PREROUTING -i $WAN -j MINIUPNPD
+	iptables -t nat -I POSTROUTING -o $WAN -j MINIUPNPD-POSTROUTING
+	iptables -t mangle -I PREROUTING -i $WAN -j MINIUPNPD
+fi
+
+## reload NAT (DMZ part)
+if [ "$nat_enable" == "enable" ]; then
+        iptables -A FORWARD -j forwarding_rule_dmz 2>/dev/null
+fi
+
+## reload TCPMSS
+iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -I FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+
+## For local process.
+iptables -D INPUT -i lo -j ACCEPT
+iptables -A INPUT -i lo -j ACCEPT
+
+
+## reload multicast bypass rule
+iptables -D FORWARD -p udp -i $WAN -d 224.0.0.0/240.0.0.0 -j ACCEPT
+iptables -N input_igmp 2>/dev/null
+iptables -F input_igmp 2>/dev/null
+iptables -D INPUT -j input_igmp 2>/dev/null
+if [ "$igmpproxy_enable" == "enable" ]; then
+	iptables -A FORWARD -p udp -i $WAN -d 224.0.0.0/240.0.0.0 -j ACCEPT
+	iptables -A input_igmp -p igmp -i $WAN -d 224.0.0.1 -j ACCEPT
+	iptables -A input_igmp -p igmp -i $WAN -d 224.0.0.2 -j ACCEPT
+	iptables -A INPUT -j input_igmp 
+fi
+
+
+## reload vpn releated 
+[ -f "/sbin/netbios_daemon" ] && /sbin/netbios_daemon reload
+
+## relaod nat session limit
+iptables -D FORWARD -j forwarding_session_limit 2>/dev/null
+if [ -n "$sessions_user" ]; then
+	iptables -A FORWARD -j forwarding_session_limit 2>/dev/null
+fi
+
+## VPN bypass rule
+iptables -D INPUT -j input_vpn 2>/dev/null
+iptables -D FORWARD -j forward_vpn 2>/dev/null
+vpn_check=$(cat /var/psk.txt)
+
+if [ -n "$vpn_check" ]; then
+	iptables -A INPUT -j input_vpn 2>/dev/null
+	iptables -A FORWARD -j forward_vpn 2>/dev/null
+fi
+
+##set remote MGMT Rule
+iptables -D INPUT -j RMMG_TELNET_INPUT 2>/dev/null
+iptables -A INPUT -j RMMG_TELNET_INPUT 2>/dev/null
+
+##set firewall www
+[ -f "/sbin/firewall_www" ] && {
+/sbin/firewall_www start
+iptables -D INPUT -j RMMG_WWW_INPUT 2>/dev/null
+iptables -A INPUT -j RMMG_WWW_INPUT 2>/dev/null
+}
+
+#####Control by daemon config#####
+##set file sharing
+#[ -f "/sbin/firewall_FTP" ] && {
+#/sbin/firewall_FTP
+#iptables -D INPUT -j FTP_INPUT 2>/dev/null
+#iptables -A INPUT -j FTP_INPUT 2>/dev/null
+#}
+#[ -f "/sbin/firewall_samba" ] && {
+#/sbin/firewall_samba
+#iptables -D INPUT -j SAMBA_INPUT 2>/dev/null
+#iptables -A INPUT -j SAMBA_INPUT 2>/dev/null
+#}
+
+## SSH
+[ -f "/sbin/firewall_ssh" ] && {
+/sbin/firewall_ssh start
+iptables -D INPUT -j RMMG_SSH_INPUT 2>/dev/null
+iptables -A INPUT -j RMMG_SSH_INPUT 2>/dev/null
+}
+
+##set for SNMP
+iptables -D INPUT -j RMMG_SNMP 2>/dev/null
+iptables -A INPUT -j RMMG_SNMP 2>/dev/null
+
+
+if [ "$firewall_enable" == "1" ]; then
+	iptables -A INPUT -j blockdevice_input_rule
+	iptables -A INPUT -j input_rule
+fi
+
+### insert ping filter on INPUT chain (firewall need to be prior to icmp ping filter)
+iptables -A INPUT -p icmp -j input_icmp
+
+## set for Block traffic which NOT  from LAN's subnet
+iptables -D INPUT -j BLOCK_DIFF_SUBNET 2>/dev/null
+iptables -A INPUT -j BLOCK_DIFF_SUBNET 2>/dev/null
+
+iptables -t filter -F SNMPchain
+iptables -t filter -F SNMPchain2
+
+if [ "$spi_enable" == "0" ]; then
+	iptables -A INPUT -j ACCEPT 2>/dev/null
+	iptables -A FORWARD -j ACCEPT 2>/dev/null
+fi
+
+## reload SPI
+iptables -D FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -D INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+## lan and local traffic must be accept by default, if there is exception rule, the default action will be ACCEPT
+iptables -D INPUT -j lan_local_default
+iptables -D FORWARD -i $LAN -j ACCEPT
+iptables -D INPUT -j ACCEPT
+iptables -D INPUT -j DROP
+iptables -D FORWARD -j ACCEPT
+iptables -D FORWARD -j DROP
+
+##Protect lan_local_default
+iptables -N lan_local_default
+iptables -F lan_local_default
+iptables -A lan_local_default -i $LAN -j ACCEPT
+
+target=`uci get firewall.general.target`
+
+## reload DoS chain
+iptables -D INPUT -j DOS_INPUT 2>/dev/null
+iptables -D FORWARD -j DOS_FORWARD 2>/dev/null
+iptables -t mangle -D PREROUTING -j DOS_LAND_ATTACK_LOG 2>/dev/null
+
+if [ "$dos_enable" == "1" ]; then
+	iptables -A INPUT -j DOS_INPUT 2>/dev/null
+	iptables -A FORWARD -j DOS_FORWARD 2>/dev/null
+	iptables -t mangle -I PREROUTING -j DOS_LAND_ATTACK_LOG 2>/dev/null
+fi
+
+##For WAN to LAN and always DROP
+iptables -A INPUT -j lan_local_default
+
+#Block traffic from main LAN to guest or visitor LAN
+guestLan="br-guest1"
+visitorLan="br-visitor1"
+visitor_network_feature=$(wifisys_tool -g 1 -f 2)
+[ -z "$visitor_network_feature" ] && visitor_network_feature="0"
+
+iptables -D FORWARD -i $LAN -o $guestLan -j DROP
+iptables -D FORWARD -i $LAN -o $visitorLan -j DROP
+
+iptables -A FORWARD -i $LAN -o $guestLan -j DROP
+[ "$visitor_network_feature" == "2" ] && iptables -A FORWARD -i $LAN -o $visitorLan -j DROP
+
+if [ "$firewall_enable" != "1" ] || [ "$target" = "DROP" ]; then
+	iptables -A FORWARD -i $LAN -j ACCEPT
+fi
+
+#guest wireless LAN
+[ -f "/lib/firewall/firewall_guest_wlan" ] && /lib/firewall/firewall_guest_wlan
+
+##set PPTP Server
+[ -f "/sbin/firewall_PPTPD" ] && /sbin/firewall_PPTPD
+iptables -t nat -D POSTROUTING -j postrouting_rule_pptpd 2>/dev/null
+iptables -t nat -I POSTROUTING -j postrouting_rule_pptpd 2>/dev/null
+iptables -D INPUT -j PPTPD_INPUT 2>/dev/null
+iptables -I INPUT -j PPTPD_INPUT 2>/dev/null
+iptables -D FORWARD -j forwarding_rule_PPTPD 2>/dev/null
+iptables -I FORWARD -j forwarding_rule_PPTPD 2>/dev/null
+
+##set OPENVPN
+[ -f "/sbin/firewall_OPENVPN" ] && /sbin/firewall_OPENVPN
+iptables -t nat -D PREROUTING -j prerouting_rule_openvpn 2>/dev/null
+iptables -t nat -I PREROUTING -j prerouting_rule_openvpn 2>/dev/null
+iptables -D INPUT -j OPENVPN_INPUT 2>/dev/null
+iptables -I INPUT -j OPENVPN_INPUT 2>/dev/null
+iptables -D FORWARD -j forwarding_rule_OPENVPN 2>/dev/null
+iptables -I FORWARD -j forwarding_rule_OPENVPN 2>/dev/null
+
+iptables -D INPUT -p tcp --dport 1723 -j ACCEPT
+iptables -D INPUT -p gre -j ACCEPT
+if [ "$proto" == "pptp" ]; then
+	iptables -I INPUT -p tcp --dport 1723 -j ACCEPT
+	iptables -I INPUT -p gre -j ACCEPT
+fi
+
+
+lock -u /tmp/.order_filter.lock

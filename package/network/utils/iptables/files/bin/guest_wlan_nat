@@ -1,0 +1,39 @@
+#!/bin/sh
+
+. /etc/functions.sh
+include /lib/config
+
+guestLan="br-guest1"
+guest_ipaddr=$(ifconfig $guestLan | grep "inet addr" | awk -F'addr:' '{print $2}' | awk -F'Bcast' '{print $1}')
+guest_netaddr=$(echo $guest_ipaddr | cut -d '.' -f 1-3)
+
+visitorLan="br-visitor1"
+visitor_ipaddr=$(ifconfig $visitorLan | grep "inet addr" | awk -F'addr:' '{print $2}' | awk -F'Bcast' '{print $1}')
+visitor_netaddr=$(echo $visitor_ipaddr | cut -d '.' -f 1-3)
+
+guest_wlan_nat_start() {
+	iptables -t nat -N postrouting_rule_nat
+	iptables -t nat -A POSTROUTING -j postrouting_rule_nat
+	iptables -t nat -A postrouting_rule_nat -o br-lan -s $guest_netaddr.0/24 -j MASQUERADE
+	
+	visitor_network_feature=$(wifisys_tool -g 1 -f 2)
+	[ "$visitor_network_feature" == "2" ] && iptables -t nat -A postrouting_rule_nat -o br-lan -s $visitor_netaddr.0/24 -j MASQUERADE
+}
+
+guest_wlan_nat_stop() {
+	iptables -t nat -D postrouting_rule_nat -o br-lan -s $visitor_netaddr.0/24 -j MASQUERADE
+	iptables -t nat -D postrouting_rule_nat -o br-lan -s $guest_netaddr.0/24 -j MASQUERADE
+	iptables -t nat -D POSTROUTING -j postrouting_rule_nat
+	iptables -t nat -X postrouting_rule_nat
+}
+
+cmd=$1
+case "$cmd" in
+	start)
+		guest_wlan_nat_stop
+		guest_wlan_nat_start
+	;;
+	stop)
+		guest_wlan_nat_stop
+	;;
+esac

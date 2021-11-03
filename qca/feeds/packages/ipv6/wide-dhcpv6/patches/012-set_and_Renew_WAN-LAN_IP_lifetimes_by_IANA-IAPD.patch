@@ -1,0 +1,148 @@
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -2093,29 +2093,44 @@ client6_recvreply(ifp, dh6, len, optinfo
+ 	 * IA in the original Renew/Rebind message, the client sends a Renew/Rebind
+ 	 * if the IA is not in the Reply message.
+ 	 */
++	struct dhcp6_eventdata *evd;
+ 	if ( (state == DHCP6S_RENEW) || (state == DHCP6S_REBIND) ) {
+-		for (iac = TAILQ_FIRST(&ifp->iaconf_list); iac; iac = TAILQ_NEXT(iac, link)) {
+-			iav = NULL;
+-			if (iac->type == IATYPE_PD) {
+-				iaparam.iaid = iac->iaid;
+-				iav = dhcp6_find_listval(&optinfo->iapd_list,
+-					DHCP6_LISTVAL_IAPD, &iaparam, 0);
+-			}
+-			else if (iac->type == IATYPE_NA) {
+-				iaparam.iaid = iac->iaid;
++		for (evd = TAILQ_FIRST(&ev->data_list); evd;
++		    evd = TAILQ_NEXT(evd, link)) {
++			if (evd->type == DHCP6_EVDATA_IANA) {
++				for (iac = TAILQ_FIRST(&ifp->iaconf_list); iac; iac = TAILQ_NEXT(iac, link)) {
++					// 2015.0610 Why here have NA? renew do not have NA, then here should not have NA, too.
++					if (iac->type == IATYPE_NA) {
++						iaparam.iaid = iac->iaid;
++					}
++				}
+ 				iav = dhcp6_find_listval(&optinfo->iana_list,
+ 					DHCP6_LISTVAL_IANA, &iaparam, 0);
++				if (!iav) {
++					client6_send(ev);
++
++					dhcp6_set_timeoparam(ev);
++					dhcp6_reset_timer(ev);
++					dprintf(LOG_INFO, FNAME, "no IA_NA option after sending RENEW or REBIND packet");
++					return (0);
++				}
+ 			}
+-			else {
+-				continue;
+-			}
+-			if (!iav) {
+-				client6_send(ev);
++			else if (evd->type == DHCP6_EVDATA_IAPD) {
++				for (iac = TAILQ_FIRST(&ifp->iaconf_list); iac; iac = TAILQ_NEXT(iac, link)) {
++					if (iac->type == IATYPE_PD) {
++						iaparam.iaid = iac->iaid;
++					}
++				}
++				iav = dhcp6_find_listval(&optinfo->iapd_list,
++					DHCP6_LISTVAL_IAPD, &iaparam, 0);
++				if (!iav) {
++					client6_send(ev);
+ 
+-				dhcp6_set_timeoparam(ev);
+-				dhcp6_reset_timer(ev);
+-				dprintf(LOG_INFO, FNAME, "no IA_PD or IA_NA option after sending RENEW or REBIND packet");
+-				return (0);
++					dhcp6_set_timeoparam(ev);
++					dhcp6_reset_timer(ev);
++					dprintf(LOG_INFO, FNAME, "no IA_PD option after sending RENEW or REBIND packet");
++					return (0);
++				}
+ 			}
+ 		}
+ 	}
+--- a/addrconf.c
++++ b/addrconf.c
+@@ -181,7 +181,7 @@ update_address(ia, addr, dhcpifp, ctlp, 
+ 	    sacreate ? "create" : "update",
+ 	    in6addr2str(&addr->addr, 0), addr->pltime, addr->vltime);
+ 
+-	if (sa->addr.vltime != 0)
++	if (sa->addr.vltime != 0 && sacreate)
+ 		if (na_ifaddrconf(IFADDRCONF_ADD, sa) < 0)
+ 			return (-1);
+ 
+@@ -208,6 +208,12 @@ update_address(ia, addr, dhcpifp, ctlp, 
+ 				return (-1);
+ 			}
+ 		}
++
++		/* set vlt plt of WAN Global IP */
++		char str[200]="";
++		sprintf(str, "ip -6 addr change %s dev %s preferred_lft %lu valid_lft %lu", in6addr2str(&addr->addr, 0), sa->dhcpif->ifname, addr->pltime, addr->vltime);
++		system(str);
++
+ 		/* update the timer */
+ 		timo.tv_sec = sa->addr.vltime;
+ 		timo.tv_usec = 0;
+--- a/prefixconf.c
++++ b/prefixconf.c
+@@ -132,7 +132,7 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 	struct prefix_ifconf *pif;
+ 	int spcreate = 0;
+ 	struct timeval timo;
+-	char str[80];
++	char str[200];
+ 	/*
+ 	 * A client discards any addresses for which the preferred
+          * lifetime is greater than the valid lifetime.
+@@ -147,11 +147,11 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 		    pinfo->pltime, pinfo->vltime);
+ 		return (-1);
+ 	}
+-	sprintf(str, "uci set radvd.prefix.AdvPreferredLifetime=%lu",pinfo->pltime);
++	snprintf(str, sizeof(str), "uci set radvd.prefix.AdvPreferredLifetime=%lu",pinfo->pltime);
+         system(str);
+-        sprintf(str, "uci set radvd.prefix.AdvValidLifetime=%lu",pinfo->vltime);
++        snprintf(str, sizeof(str), "uci set radvd.prefix.AdvValidLifetime=%lu",pinfo->vltime);
+         system(str);
+-	sprintf(str, "uci commit radvd");
++        snprintf(str, sizeof(str), "uci commit radvd");
+ 	system(str);
+ 
+ 	if (iac_pd == NULL) {
+@@ -204,7 +204,7 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 	    pinfo->pltime, pinfo->vltime);
+ 
+ 	/* update prefix interfaces if necessary */
+-	if (sp->prefix.vltime != 0 && spcreate) {
++	if (sp->prefix.vltime != 0) {
+ 		for (pif = TAILQ_FIRST(iac_pd->pifc_head); pif;
+ 		    pif = TAILQ_NEXT(pif, link)) {
+ 			/*
+@@ -221,7 +221,14 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 				continue;
+ 			}
+ 
+-			add_ifprefix(sp, pinfo, pif);
++			if (spcreate) {
++				add_ifprefix(sp, pinfo, pif);
++			}
++
++			// Set LAN side IP lifetimes from IA_PD (not include dhcpifp->ifname)
++			snprintf(str, sizeof(str), "ifconfig %s |grep Global |awk '{print $3}' |head -1 |xargs ip -6 addr change dev %s preferred_lft %lu valid_lft %lu",
++					pif->ifname, pif->ifname, pinfo->pltime, pinfo->vltime);
++			system(str);
+ 		}
+ 	}
+ 
+@@ -247,6 +254,7 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 				return (-1);
+ 			}
+ 		}
++
+ 		/* update the timer */
+ 		timo.tv_sec = sp->prefix.vltime;
+ 		timo.tv_usec = 0;

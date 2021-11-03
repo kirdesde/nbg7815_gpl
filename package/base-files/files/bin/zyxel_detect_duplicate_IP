@@ -1,0 +1,8 @@
+#!/bin/sh
+
+[ -z "$1" ] && exit 0
+
+wanIf=$(uci get network.wan.ifname)
+
+arping -q -D -I $wanIf -c 2 $1
+echo $?

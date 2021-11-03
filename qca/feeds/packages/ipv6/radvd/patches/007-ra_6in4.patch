@@ -1,0 +1,39 @@
+--- a/send.c
++++ b/send.c
+@@ -78,6 +78,7 @@
+ {
+ 	system("uci get network.general.wan6rd_enable > /tmp/wan6rd_enable");
+ 	system("uci get network.general.wan6to4_enable > /tmp/wan6to4_enable");
++	system("uci get network.general.wan6in4_enable > /tmp/wan6in4_enable");
+ 	system("uci get dhcp6c.basic.ifname > /tmp/curr_wan_ifname");
+ 
+ 	// chk if 6rd is enabled.
+@@ -100,6 +101,16 @@
+ 		fclose(fp_6to4enable);
+ 	}
+ 
++	// chk if 6in4 is enabled.
++	FILE *fp_6in4enable = NULL;
++	char m_6in4enable[50] = "";
++	if((fp_6in4enable = fopen("/tmp/wan6in4_enable", "r")) == NULL ){
++		fprintf(stderr, "fail to open tmpwan6in4_enable file\n");
++	}else {
++		fscanf(fp_6in4enable,"%s",m_6in4enable);
++		fclose(fp_6in4enable);
++	}
++
+ 	// get current WAN ifname.
+ 	FILE *fp_ifname = NULL;
+ 	char m_ifname[50] = "";
+@@ -111,9 +122,9 @@
+ 	fclose(fp_ifname);
+ 
+ 	char m_msg[100] = "";
+-	if ( (strstr(m_6rdenable, "1") != NULL) || (strstr(m_6to4enable, "1") != NULL) ) {
++	if ( (strstr(m_6rdenable, "1") != NULL) || (strstr(m_6to4enable, "1") != NULL) || (strstr(m_6in4enable, "1") != NULL) ) {
+ 		return 0; // don't care 6rd, for now.
+-		snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep 'inet ' |awk '{print $2}' > /tmp/wanip\n", m_ifname); // 6rd is ENABLED/6to4 is ENABLED
++		snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep 'inet ' |awk '{print $2}' > /tmp/wanip\n", m_ifname); // 6rd is ENABLED/6to4 is ENABLED/6in4 is ENABLED
+ 	} else {
+ 		snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep Global |awk '{print $3}' > /tmp/wanip\n", m_ifname);
+ 	}

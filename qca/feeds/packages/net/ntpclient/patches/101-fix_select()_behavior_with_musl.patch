@@ -1,0 +1,12 @@
+diff --git a/ntpclient.c b/ntpclient.c
+--- a/ntpclient.c
++++ b/ntpclient.c
+@@ -503,7 +503,7 @@ static void primary_loop(int usd, struct ntp_control *ntpc)
+ 				if (errno != EINTR) perror("select");
+ 				continue;
+ 			}
+-			if (to.tv_sec == 0) {
++			if (i == 0) {
+ 				if (probes_sent >= ntpc->probe_count &&
+ 					ntpc->probe_count != 0) break;
+ 				send_packet(usd,ntpc->time_of_send);

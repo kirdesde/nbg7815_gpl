@@ -1,0 +1,305 @@
+--- a/src/dnsmasq.h	2017-10-02 21:13:51.000000000 +0800
++++ b/src/dnsmasq.h	2017-10-06 15:39:43.523110030 +0800
+@@ -696,6 +696,12 @@
+   struct dhcp_lease *next;
+ };
+ 
++struct dhcp_lease_tmp {
++  char hwaddr[64];
++  char hostname[512];
++  struct dhcp_lease_tmp *next;
++};
++
+ struct dhcp_netid {
+   char *net;
+   struct dhcp_netid *next;
+
+--- a/src/lease.c	2017-10-02 21:13:51.000000000 +0800
++++ b/src/lease.c	2017-10-06 15:36:39.454652147 +0800
+@@ -21,6 +21,162 @@
+ static struct dhcp_lease *leases = NULL, *old_leases = NULL;
+ static int dns_dirty, file_dirty, leases_left;
+ 
++//WWH add
++static struct dhcp_lease_tmp *kill_leases = NULL;
++
++/** WWH add *********************************************************/
++static void save_killname(char *hwaddr, char *hostname)
++{
++	if ( hwaddr == NULL || hostname == NULL )
++	{
++		return;
++	}
++
++	struct dhcp_lease_tmp *lease;
++	lease = calloc(1, sizeof(struct dhcp_lease_tmp));
++	lease->next = NULL;
++
++	strcpy(lease->hwaddr , hwaddr);
++	strcpy(lease->hostname, hostname);
++	
++	if ( kill_leases == NULL )
++	{
++		kill_leases = lease;
++	}
++	else
++	{
++		struct dhcp_lease_tmp *lease_tmp;
++		lease_tmp = kill_leases;
++		while(lease_tmp->next)
++		{
++			lease_tmp = lease_tmp->next;
++		}
++		lease_tmp->next = lease;
++	}
++}
++
++void get_kill_leases_hostname(char *hwaddr, char *hostname)
++{
++	if ( hwaddr == NULL || kill_leases == NULL )
++	{
++		return;
++	}
++
++	struct dhcp_lease_tmp *lease;
++	lease = kill_leases;
++	while(lease)
++	{
++		if ( strncmp(hwaddr, lease->hwaddr, 17) == 0 ) //find same mac
++		{
++			strcpy(hostname, lease->hostname);
++			return;
++		}
++		lease = lease->next;
++	}
++	strncpy(hostname, "*", 1);
++}
++
++void Removeoutputfile(void)
++{
++#if 0
++	char buf[1024];
++	FILE *fp = fopen("/tmp/dhcp.leases2", "r");
++	if (fp)
++	{
++		while (fgets(buf, sizeof(buf), fp))
++		{
++			char hwaddr[64] = "";
++			char ip[64] = "";
++			char hostname[512] = "";
++			sscanf( buf , "%s %s %s", hwaddr, ip, hostname);
++			save_killname(hwaddr, hostname);
++		}
++		fclose(fp);
++	}
++
++	remove("/tmp/dhcp.leases2");
++	system("touch /tmp/dhcp.leases2");
++#else
++	FILE *fp = NULL;
++	char *file_name = NULL;
++	char buf[1024];
++	int size = 0;
++
++	if(daemon->lease_file != NULL) {
++		file_name = malloc(strlen(daemon->lease_file)+2);
++		sprintf(file_name, "%s2", daemon->lease_file);
++	}
++	else {
++		file_name = malloc(strlen(LEASEFILE)+2);
++		sprintf(file_name, "%s2", LEASEFILE);
++	}
++
++	fp = fopen(file_name, "r");
++	if(fp) {
++		while (fgets(buf, sizeof(buf), fp)) {
++			char hwaddr[64] = "";
++			char ip[64] = "";
++			char hostname[512] = "";
++			sscanf( buf , "%s %s %s", hwaddr, ip, hostname);
++			save_killname(hwaddr, hostname);
++		}
++		fclose(fp);
++	}
++
++	remove(file_name);
++	fp = fopen(file_name, "w+");
++	if(fp) {
++		fclose(fp);
++	}
++
++	free(file_name);
++#endif
++}
++
++void outputData(char *outputdata)
++{
++#if 0
++	char output[1024];
++	sprintf(output, "echo \"%s\" >> %s", outputdata, "/tmp/dhcp.leases2");
++	system(output);
++#else
++	FILE *fp = NULL;
++	char *file_name = NULL;
++
++	my_syslog(MS_DHCP | LOG_WARNING, _("%s : Enter"), __func__);
++
++	if(daemon->lease_file != NULL) {
++		file_name = malloc(strlen(daemon->lease_file)+2);
++		sprintf(file_name, "%s2", daemon->lease_file);
++	}
++	else {
++		file_name = malloc(strlen(LEASEFILE)+2);
++		sprintf(file_name, "%s2", LEASEFILE);
++	}
++
++	fp = fopen(file_name, "a+");
++	if(fp) {
++		fprintf(fp, "%s\n", outputdata);
++		fclose(fp);
++	}
++
++#endif
++}
++
++void free_kill_leases()
++{
++	struct dhcp_lease_tmp *lease_f;
++	struct dhcp_lease_tmp *lease_tmp;
++	lease_f = kill_leases;
++	while (lease_f)
++	{
++		lease_tmp = lease_f->next;
++		free(lease_f);
++		lease_f = lease_tmp;
++	}
++	kill_leases = NULL;
++}
++
+ static int read_leases(time_t now, FILE *leasestream)
+ {
+   unsigned long ei;
+@@ -208,6 +364,8 @@
+   file_dirty = 0;
+   lease_prune(NULL, now);
+   dns_dirty = 1;
++  //[WWH] add
++	system("touch /tmp/dhcp.leases2");
+ }
+ 
+ void lease_update_from_configs(void)
+@@ -251,7 +409,9 @@
+       errno = 0;
+       rewind(daemon->lease_stream);
+       if (errno != 0 || ftruncate(fileno(daemon->lease_stream), 0) != 0)
+-	err = errno;
++  err = errno;
++      //WWH add
++	    Removeoutputfile();
+       
+       for (lease = leases; lease; lease = lease->next)
+ 	{
+@@ -279,8 +439,35 @@
+ 	  inet_ntop(AF_INET, &lease->addr, daemon->addrbuff, ADDRSTRLEN); 
+ 
+ 	  ourprintf(&err, " %s ", daemon->addrbuff);
+-	  ourprintf(&err, "%s ", lease->hostname ? lease->hostname : "*");
+-	  	  
++    ourprintf(&err, "%s ", lease->hostname ? lease->hostname : "*");
++    
++    //[WWH] output file
++    int macCount = 0;
++    char outputdata[1024] = "";
++    char output_hwaddr[64] = "";
++    char output_hostname[512] = "";
++    for (macCount = 0; macCount < lease->hwaddr_len; macCount++)
++    {
++      sprintf(output_hwaddr+(macCount*3), "%.2x", lease->hwaddr[macCount]);
++      if (macCount != lease->hwaddr_len - 1)
++      {
++        sprintf(output_hwaddr+((macCount*3)+2), ":");
++      }
++    }
++
++    if ( !lease->hostname ) //lease->hostname is NULL, find kill_leases
++    {
++      //get hostname in kill_leases
++      get_kill_leases_hostname(output_hwaddr, output_hostname);
++    }
++    else
++    {
++      strcpy(output_hostname, lease->hostname);
++    }
++    sprintf(outputdata, "%s %s %s", output_hwaddr, daemon->addrbuff, output_hostname);
++    //output file
++    outputData(outputdata);
++  
+ 	  if (lease->clid && lease->clid_len != 0)
+ 	    {
+ 	      for (i = 0; i < lease->clid_len - 1; i++)
+@@ -376,6 +563,9 @@
+     }
+ 
+   send_alarm(next_event, now);
++
++  //clear kill_leases
++   free_kill_leases();
+ }
+ 
+ 
+@@ -908,6 +1098,11 @@
+ 
+ static void kill_name(struct dhcp_lease *lease)
+ {
++  //save kill name
++ char hwaddr_tmp[64] = "";
++	sprintf(hwaddr_tmp, "%.2x:%.2x:%.2x:%.2x:%.2x:%.2x", lease->hwaddr[0],lease->hwaddr[1],lease->hwaddr[2],lease->hwaddr[3],lease->hwaddr[4],lease->hwaddr[5]);
++  save_killname(hwaddr_tmp, lease->hostname);
++  
+   /* run script to say we lost our old name */
+   
+   /* this shouldn't happen unless updates are very quick and the
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

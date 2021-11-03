@@ -1,0 +1,11 @@
+prefix=$1
+ifname=$2
+plt=$3
+vlt=$4
+
+prefixNoComment=$(echo $prefix | awk -F'::' '{print $1}')
+
+ipaddr=$(ifconfig $ifname |grep Global |grep $prefixNoComment |awk '{print $3}')
+
+ip -6 addr change dev $ifname $ipaddr preferred_lft $plt valid_lft $vlt
+

@@ -1,0 +1,23 @@
+--- a/send.c
++++ b/send.c
+@@ -477,11 +477,18 @@ send_ra(struct Interface *iface, struct 
+ 				if (prefix->DecrementLifetimesFlag) {
+ 					decrement_lifetime(secs_since_last_ra,
+ 								&prefix->curr_validlft);
+-					
++
+ 					decrement_lifetime(secs_since_last_ra,
+ 								&prefix->curr_preferredlft);
+-					if (prefix->curr_preferredlft == 0)
++
++					if (prefix->curr_preferredlft == 0) {
+ 						cease_adv_pfx_msg(iface->Name, &prefix->Prefix, prefix->PrefixLen);
++
++						// RFC7084: L-4: An IPv6 CE router MUST NOT advertise itself as a default
++						//               router with a Router Lifetime [RFC4861] greater than zero if
++						//               it has no prefixes configured or delegated to it.
++						radvert->nd_ra_router_lifetime = 0;
++					}
+ 				}
+ 				pinfo->nd_opt_pi_valid_time	= htonl(prefix->curr_validlft);
+ 				pinfo->nd_opt_pi_preferred_time = htonl(prefix->curr_preferredlft);

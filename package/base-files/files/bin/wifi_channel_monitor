@@ -1,0 +1,27 @@
+#!/bin/sh
+. /etc/functions.sh
+include /lib/config
+
+channel_24g=0
+channel_5g=0
+
+main_24g_iface="ath0"
+main_5g_iface="ath10"
+main_5g2_iface="ath20"
+
+while true; do
+	channel_24g=$(iwlist $main_24g_iface channel | grep 'Current Frequency'| awk -F 'Channel ' '{print $2}'| awk -F ')' '{print $1}'|sed 's/\"//g')
+	echo "24G=$channel_24g" > /tmp/wifi_channel
+
+	channel_5g=$(iwlist $main_5g_iface channel | grep 'Current Frequency'| awk -F 'Channel ' '{print $2}'| awk -F ')' '{print $1}'|sed 's/\"//g')
+	echo "5G=$channel_5g" >> /tmp/wifi_channel
+
+	channel_5g2=$(iwlist $main_5g2_iface channel | grep 'Current Frequency'| awk -F 'Channel ' '{print $2}'| awk -F ')' '{print $1}'|sed 's/\"//g')
+	echo "5G2=$channel_5g2" >> /tmp/wifi_channel
+
+	if [ "$1" == "once" ]; then
+		break
+	fi
+
+	sleep 180
+done

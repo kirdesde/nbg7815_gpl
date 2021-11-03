@@ -1,0 +1,68 @@
+--- a/dhcp6c.c
++++ b/dhcp6c.c
+@@ -2460,6 +2460,8 @@ client6_recvreply(ifp, dh6, len, optinfo
+ 			    i, d->val_vbuf.dv_buf);
+ 			snprintf(cmd, sizeof(cmd), "uci set radvd.dnssl.suffix=%s",
+ 				    d->val_vbuf.dv_buf);system(cmd);
++			snprintf(cmd, sizeof(cmd), "uci set dhcp6s.basic.domain_name=%s",
++				    d->val_vbuf.dv_buf);system(cmd);
+ 		}
+ 		snprintf(cmd, sizeof(cmd), "uci commit");system(cmd);
+ 	}
+--- a/common.c
++++ b/common.c
+@@ -1494,6 +1494,9 @@ dhcp6_copy_options(dst, src)
+ 	return (-1);
+ }
+ 
++static int g_6sGiveOpt23 = 0;
++static int g_6sGiveOpt24 = 0;
++
+ int
+ dhcp6_get_options(p, ep, optinfo)
+ 	struct dhcp6opt *p, *ep;
+@@ -1587,6 +1590,16 @@ dhcp6_get_options(p, ep, optinfo)
+ 				memcpy(&opttype, val, sizeof(u_int16_t));
+ 				num = (int)ntohs(opttype);
+ 
++				if (num==DH6OPT_DNS) {
++					g_6sGiveOpt23 = 1;
++					goto nextoption;
++				}
++
++				if (num==DH6OPT_DNSNAME) {
++					g_6sGiveOpt24 = 1;
++					goto nextoption;
++				}
++
+ 				dprintf(LOG_DEBUG, "",
+ 					"  requested option: %s",
+ 					dhcp6optstr(num));
+@@ -2435,13 +2448,21 @@ dhcp6_set_options(type, optbp, optep, op
+ 	    &p, optep, &len) != 0)
+ 		goto fail;
+ 
+-	if (dhcp6_set_addr(DH6OPT_DNS, &optinfo->dns_list,
+-	    &p, optep, &len) != 0)
+-		goto fail;
++	if (g_6sGiveOpt23==1) {
++		if (dhcp6_set_addr(DH6OPT_DNS, &optinfo->dns_list,
++			&p, optep, &len) != 0)
++		{
++			goto fail;
++		}
++	}
+ 
+-	if (dhcp6_set_domain(DH6OPT_DNSNAME, &optinfo->dnsname_list,
+-	    &p, optep, &len) != 0)
+-		goto fail;
++	if (g_6sGiveOpt24==1) {
++		if (dhcp6_set_domain(DH6OPT_DNSNAME, &optinfo->dnsname_list,
++			&p, optep, &len) != 0)
++		{
++			goto fail;
++		}
++	}
+ 
+ 	if (dhcp6_set_addr(DH6OPT_NIS_SERVERS, &optinfo->nis_list,
+ 	    &p, optep, &len) != 0)

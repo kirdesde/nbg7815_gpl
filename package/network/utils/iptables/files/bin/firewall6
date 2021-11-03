@@ -1,0 +1,101 @@
+#!/bin/sh 
+
+##check mode,if AP/UR,exit
+sys_mode=$(get_sys_mode)
+[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] && exit 0
+
+boot() {
+        . /etc/functions.sh
+	include /lib/network
+
+        scan_interfaces
+
+        config_get WAN wan ifname
+        config_get LAN lan ifname
+
+        ###IPv6
+        insmod ip6_queue 2>&- >&-
+        insmod ip6t_IMQ 2>&- >&-
+        insmod ip6t_REJECT 2>&- >&-
+        insmod ip6t_ROUTE 2>&- >&-
+        insmod ip6t_ah 2>&- >&-
+        insmod ip6t_eui64 2>&- >&-
+        insmod ip6t_mh 2>&- >&-
+        insmod ip6t_owner 2>&- >&-
+        insmod ip6table_filter 2>&- >&-
+        insmod ip6table_mangle 2>&- >&-
+        insmod ip6table_raw 2>&- >&-
+
+        ### currently we put firewall apply in the hotplug event ###  
+	/lib/firewall/configure_firewall6
+		
+	## iptables app reorder
+	/lib/firewall/ip6tables_app_order
+
+	##support simple security
+	ck_simpeSecurity=$(uci get firewall6.general.simpleSecurityEnabled)
+	[ "$ck_simpeSecurity" == "0" ] && {		
+		ip6tables -P INPUT ACCEPT
+		ip6tables -P FORWARD ACCEPT
+	}
+
+}
+
+apply() {
+
+	## DOS, IP filter, ICMP ping
+	/lib/firewall/configure_firewall6
+	
+	## iptables app reorder
+	/lib/firewall/ip6tables_app_order
+
+	##support simple security
+	ck_simpeSecurity=$(uci get firewall6.general.simpleSecurityEnabled)
+	[ "$ck_simpeSecurity" == "0" ] && {		
+		ip6tables -P INPUT ACCEPT
+		ip6tables -P FORWARD ACCEPT
+	}
+}
+
+EXTRA_HELP="    apply   Apply new rules"
+EXTRA_COMMANDS="apply"
+
+cmd=$1
+
+case "$cmd" in
+boot) boot;;
+apply|stop|start|reload|restart|init)
+	## firewall
+	ip6tables -F input_advertisement
+	ip6tables -F forwarding_advertisement
+	ip6tables -F input_rule
+	ip6tables -F forwarding_rule_filter
+	ip6tables -F lan_local_default
+    
+	ip6tables -D INPUT -j input_advertisement
+	ip6tables -D FORWARD -j forwarding_advertisement
+	ip6tables -D INPUT -j input_rule
+	ip6tables -D FORWARD -j forwarding_rule_filter
+	ip6tables -D INPUT -j lan_local_default
+    
+	ip6tables -D INPUT -j ACCEPT
+	ip6tables -D FORWARD -j ACCEPT
+
+	ip6tables -X input_advertisement
+	ip6tables -X forwarding_advertisement  
+	ip6tables -X input_rule
+	ip6tables -X forwarding_rule_filter
+	ip6tables -X lan_local_default
+    
+	## icmp filter
+	ip6tables -F input_icmp
+	ip6tables -F forwarding_icmp
+    
+	ip6tables -D INPUT -p icmp -j input_icmp
+	ip6tables -D FORWARD -p icmp -j forwarding_icmp
+    
+	ip6tables -X input_icmp
+	ip6tables -X forwarding_icmp
+    
+	apply;;
+esac

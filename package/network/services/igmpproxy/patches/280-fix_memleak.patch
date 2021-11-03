@@ -1,0 +1,12 @@
+Index: igmpproxy-0.1/src/config.c
+===================================================================
+--- igmpproxy-0.1.orig/src/config.c
++++ igmpproxy-0.1/src/config.c
+@@ -333,6 +333,7 @@ struct vifconfig *parsePhyintToken() {
+ 
+     // Clean up after a parseerror...
+     if(parseError) {
++        free(tmpPtr->name);
+         free(tmpPtr);
+         tmpPtr = NULL;
+     }

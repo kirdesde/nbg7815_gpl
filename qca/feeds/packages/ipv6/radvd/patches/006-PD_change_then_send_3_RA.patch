@@ -1,0 +1,392 @@
+--- a/radvd.c
++++ b/radvd.c
+@@ -94,6 +94,15 @@ int drop_root_privileges(const char *);
+ int readin_config(char *);
+ int check_conffile_perm(const char *, const char *);
+ void main_loop(void);
++void kickoff_adverts_when_pd_change(void);
++void set_prefix_plt_vlt_to_zero(void);
++void set_prefix_plt_vlt_back(void);
++void backup_old_prefix(void);
++void backup_new_prefix(void);
++void set_prefix_to_old(void);
++void set_prefix_back_to_new(void);
++int pd_change_flag_on(void);
++int is_old_new_prefix_exist_and_diff(void);
+ 
+ int
+ main(int argc, char *argv[])
+@@ -352,7 +361,18 @@ main(int argc, char *argv[])
+ 	close(fd);
+ 
+ 	config_interface();
+-	kickoff_adverts();
++
++	// see if need to use 3 RA architecture. (pd is changed)
++	backup_new_prefix();
++	if (is_old_new_prefix_exist_and_diff()==1) {
++		system("echo 1 > /tmp/radvd_pd_change");
++		kickoff_adverts_when_pd_change();
++		system("rm -rf /tmp/radvd_pd_change");
++	}else{
++		kickoff_adverts();
++	}
++	backup_old_prefix(); // for the next time radvd.bin be restart.
++
+ 	main_loop();
+ 	stop_adverts();
+ 	unlink(pidfile);
+@@ -847,3 +867,322 @@ usage(void)
+ 	exit(1);
+ }
+ 
++void set_prefix_plt_vlt_to_zero(void)
++{
++	struct AdvPrefix *prefix;
++	char pfx_str[INET6_ADDRSTRLEN];
++	flog(LOG_INFO, "Resetting prefix lifetimes");
++
++        struct Interface *iface = NULL;
++        iface=IfaceList;
++	if (!iface) return;
++	for (iface; iface; iface = iface->next)
++	{
++		if (!iface) return;
++		for (prefix = iface->AdvPrefixList; prefix;
++							prefix = prefix->next)
++		{
++			if (!prefix)return;
++			print_addr(&prefix->Prefix, pfx_str);
++			dlog(LOG_DEBUG, 4, "%s/%u%%%s plft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_preferredlft, prefix->AdvPreferredLifetime);
++			dlog(LOG_DEBUG, 4, "%s/%u%%%s vlft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_validlft, prefix->AdvValidLifetime);
++			prefix->curr_validlft =     0;
++			prefix->curr_preferredlft = 0;
++		}
++	}
++}
++void set_prefix_plt_vlt_back(void)
++{
++	struct AdvPrefix *prefix;
++	char pfx_str[INET6_ADDRSTRLEN];
++	flog(LOG_INFO, "Resetting prefix lifetimes");
++
++	struct Interface *iface = NULL;
++	iface=IfaceList;
++	if (!iface) return;
++	for (iface; iface; iface = iface->next)
++	{
++		if (!iface) return;
++		for (prefix = iface->AdvPrefixList; prefix;
++							prefix = prefix->next)
++		{
++			if (!prefix) return;
++			print_addr(&prefix->Prefix, pfx_str);
++			dlog(LOG_DEBUG, 4, "%s/%u%%%s plft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_preferredlft, prefix->AdvPreferredLifetime);
++			dlog(LOG_DEBUG, 4, "%s/%u%%%s vlft reset from %u to %u secs", pfx_str, prefix->PrefixLen, iface->Name, prefix->curr_validlft, prefix->AdvValidLifetime);
++			prefix->curr_validlft =     prefix->AdvValidLifetime;
++			prefix->curr_preferredlft = prefix->AdvPreferredLifetime;
++		}
++	}
++}
++void set_prefix_to_old(void)
++{
++	struct AdvPrefix *prefix;
++	char pfx_str[INET6_ADDRSTRLEN];
++	flog(LOG_INFO, "Resetting prefix lifetimes");
++
++        struct Interface *iface = NULL;
++        iface=IfaceList;
++	if (!iface) return;
++	for (iface; iface; iface = iface->next)
++	{
++		if (!iface) return;
++		for (prefix = iface->AdvPrefixList; prefix;
++							prefix = prefix->next)
++		{
++			if (!prefix)return;
++			print_addr(&prefix->Prefix, pfx_str);
++
++			// read oldprefix
++			long lSize;
++			unsigned char * buffer;
++			FILE* pFile = NULL;
++			pFile = fopen("/tmp/radvd_oldprefix", "rb");
++			if(!pFile) {
++				system("echo $(date +%H:%M:%S)'  radvd.bin  set_prefix_to_old()  tmpradvd_oldprefix could not open' >> /tmp/dd");
++			}else{
++				// obtain file size:
++				fseek (pFile , 0 , SEEK_END);
++				lSize = ftell (pFile);
++				rewind (pFile);
++				// allocate memory to contain the whole file:
++				buffer = (unsigned char*) malloc (sizeof(unsigned char)*lSize);
++				if (buffer == NULL) {fputs ("Memory error",stderr); exit (2);}
++				// copy the file into the buffer:
++				fread (buffer,1,lSize,pFile);
++				// write into prefix
++				int i=0;
++				for(;i<16;i++){
++					prefix->Prefix.__in6_u.__u6_addr8[i] = buffer[i];
++				}
++				free(buffer);
++				fclose(pFile);
++			}
++		}
++	}
++}
++void set_prefix_back_to_new(void)
++{
++	struct AdvPrefix *prefix;
++	char pfx_str[INET6_ADDRSTRLEN];
++	flog(LOG_INFO, "Resetting prefix lifetimes");
++
++        struct Interface *iface = NULL;
++        iface=IfaceList;
++	if (!iface) return;
++	for (iface; iface; iface = iface->next)
++	{
++		if (!iface) return;
++		for (prefix = iface->AdvPrefixList; prefix;
++							prefix = prefix->next)
++		{
++			if (!prefix) return;
++			print_addr(&prefix->Prefix, pfx_str);
++
++			// read newprefix
++			long lSize;
++			unsigned char * buffer;
++			FILE* pFile = NULL;
++			pFile = fopen("/tmp/radvd_newprefix", "rb");
++			if(!pFile) {
++				system("echo $(date +%H:%M:%S)'  radvd.bin  set_prefix_to_new()  tmpradvd_newprefix could not open' >> /tmp/dd");
++			}else{
++				// obtain file size:
++				fseek (pFile , 0 , SEEK_END);
++				lSize = ftell (pFile);
++				rewind (pFile);
++				// allocate memory to contain the whole file:
++				buffer = (unsigned char*) malloc (sizeof(unsigned char)*lSize);
++				if (buffer == NULL) {fputs ("Memory error",stderr); exit (2);}
++				// copy the file into the buffer:
++				fread (buffer,1,lSize,pFile);
++				// write into prefix
++				int i=0;
++				for(;i<16;i++){
++					prefix->Prefix.__in6_u.__u6_addr8[i] = buffer[i];
++				}
++				free(buffer);
++				fclose(pFile);
++			}
++		}
++	}
++}
++void backup_old_prefix(void)
++{
++    struct AdvPrefix *prefix;
++    char pfx_str[INET6_ADDRSTRLEN];
++    struct Interface *iface = NULL;
++    iface=IfaceList;
++    if (!iface) return;
++    for (iface; iface; iface = iface->next)
++    {
++        if (!iface) return;
++        for (prefix = iface->AdvPrefixList; prefix;
++                        prefix = prefix->next)
++        {
++            if (!prefix)return;
++            print_addr(&prefix->Prefix, pfx_str);
++
++            // backup old prefix
++            unsigned char buff[16];
++            int i=0;
++            for(;i<16;i++){
++                buff[i] = prefix->Prefix.__in6_u.__u6_addr8[i];
++            }
++            FILE* fp = NULL;
++            fp = fopen("/tmp/radvd_oldprefix", "wb");
++            if(!fp) {
++                system("echo $(date +%H:%M:%S)'  radvd.bin  backup_old_prefix()  tmpradvd_oldprefix could not open' >> /tmp/dd");
++            }else{
++                fwrite(buff, sizeof(unsigned char), sizeof(buff), fp);
++                fclose(fp);
++            }
++        }
++    }
++}
++void backup_new_prefix(void)
++{
++    struct AdvPrefix *prefix;
++    char pfx_str[INET6_ADDRSTRLEN];
++    flog(LOG_INFO, "Resetting prefix lifetimes");
++
++    struct Interface *iface = NULL;
++    iface=IfaceList;
++    if (!iface) return;
++    for (iface; iface; iface = iface->next)
++    {
++        if (!iface) return;
++        for (prefix = iface->AdvPrefixList; prefix;
++                        prefix = prefix->next)
++        {
++            if (!prefix)return;
++            print_addr(&prefix->Prefix, pfx_str);
++
++            // backup newprefix
++            unsigned char buff[16];
++            int i=0;
++            for(;i<16;i++){
++                buff[i] = prefix->Prefix.__in6_u.__u6_addr8[i];
++            }
++            FILE* fp = NULL;
++            fp = fopen("/tmp/radvd_newprefix", "wb");
++            if(!fp) {
++                system("echo $(date +%H:%M:%S)'  radvd.bin  set_prefix_to_old()  tmpradvd_newprefix could not open' >> /tmp/dd");
++            }else{
++                fwrite(buff, sizeof(unsigned char), sizeof(buff), fp);
++                fclose(fp);
++            }
++        }
++    }
++}
++
++int
++pd_change_flag_on(void)
++{
++    int result = 0;
++
++    if( access( "/tmp/radvd_pd_change", F_OK ) != -1 ) {
++        // flag exists  
++        result = 1;
++    } else {
++        result = 0;
++    }
++
++    return result;
++}
++
++int
++is_old_new_prefix_exist_and_diff(void)
++{
++    int result = 0;
++
++    // read newprefix
++    long lSize;
++    unsigned char * buffer = NULL;
++    FILE* pFile = NULL;
++    pFile = fopen("/tmp/radvd_newprefix", "rb");
++    if(!pFile) {
++        system("echo $(date +%H:%M:%S)'  radvd.bin  is_diff()  tmpradvd_newprefix could not open' >> /tmp/dd");
++    }else{
++        // obtain file size:
++        fseek (pFile , 0 , SEEK_END);
++        lSize = ftell (pFile);
++        rewind (pFile);
++        // allocate memory to contain the whole file:
++        buffer = (unsigned char*) malloc (sizeof(unsigned char)*lSize);
++        if (buffer == NULL) {fputs ("Memory error",stderr); exit (2);}
++        // copy the file into the buffer:
++        fread (buffer,1,lSize,pFile);
++    }
++
++    // read oldprefix
++    long lSizeold;
++    unsigned char * bufferold = NULL;
++    FILE* pFileold = NULL;
++    pFileold = fopen("/tmp/radvd_oldprefix", "rb");
++    if(!pFileold) {
++        system("echo $(date +%H:%M:%S)'  radvd.bin  is_diff()  tmpradvd_oldprefix could not open' >> /tmp/dd");
++    }else{
++        // obtain file size:
++        fseek (pFileold , 0 , SEEK_END);
++        lSizeold = ftell (pFileold);
++        rewind (pFileold);
++        // allocate memory to contain the whole file:
++        bufferold = (unsigned char*) malloc (sizeof(unsigned char)*lSizeold);
++        if (bufferold == NULL) {fputs ("Memory error",stderr); exit (2);}
++        // copy the file into the buffer:
++        fread (bufferold,1,lSizeold,pFileold);
++    }
++
++    // if new prefix and old prefix are EXIST and THE SAME, then indeed the PD changed.
++    if(buffer && bufferold ) {
++        result = memcmp(buffer, bufferold, 16);
++        if (result != 0) {
++            result = 1;
++        }
++    }else{
++        result = 0;
++    }
++    if (buffer) free(buffer);
++    if (bufferold) free(bufferold);
++    if (pFile) fclose(pFile);
++    if (pFileold) fclose(pFileold);
++
++    return result;
++}
++
++void
++kickoff_adverts_when_pd_change(void)
++{
++        struct Interface *iface;
++        /*
++         *      send initial advertisement and set timers
++         */
++        for(iface=IfaceList; iface; iface=iface->next)
++        {
++                double next;
++
++                gettimeofday(&iface->last_ra_time, NULL);
++                if( iface->UnicastOnly )
++                        continue;
++
++                gettimeofday(&iface->last_multicast, NULL);
++                if (!iface->AdvSendAdvert)
++                        continue;
++
++                set_prefix_plt_vlt_to_zero();
++                set_prefix_to_old();
++                /* send an initial advertisement */
++                int i=3;
++                for (;i>0;i--) {
++                        if (send_ra_forall(iface, NULL) == 0) {
++                                iface->init_racount++;
++                                next = min(MAX_INITIAL_RTR_ADVERT_INTERVAL, iface->MaxRtrAdvInterval);
++                                iface->next_multicast = next_timeval(next);
++                        }
++                }
++                set_prefix_plt_vlt_back();
++                set_prefix_back_to_new();
++        }
++}
++
+--- a/send.c
++++ b/send.c
+@@ -31,18 +31,20 @@ g_HasSetRaltToZero=0;
+ int
+ send_ra_forall(struct Interface *iface, struct in6_addr *dest)
+ {
+-	g_NeedSetRaltToZero = check_wan_ip_empty();
++	if (!pd_change_flag_on()) {
++		g_NeedSetRaltToZero = check_wan_ip_empty();
+ 
+-	if (g_NeedSetRaltToZero != g_HasSetRaltToZero) {
++		if (g_NeedSetRaltToZero != g_HasSetRaltToZero) {
+ 
+-		if (g_NeedSetRaltToZero == 1) {
+-			set_prefix_lifetimes_to_zero(iface);
+-		} else {
+-			set_prefix_lifetimes_back(iface);
+-		}
++			if (g_NeedSetRaltToZero == 1) {
++				set_prefix_lifetimes_to_zero(iface);
++			} else {
++				set_prefix_lifetimes_back(iface);
++			}
+ 
+-		g_HasSetRaltToZero = g_NeedSetRaltToZero;
+-	}
++			g_HasSetRaltToZero = g_NeedSetRaltToZero;
++		}
++ 	}
+ 
+ 	struct Clients *current;

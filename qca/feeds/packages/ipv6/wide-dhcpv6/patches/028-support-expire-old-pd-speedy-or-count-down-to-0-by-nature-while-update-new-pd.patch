@@ -1,0 +1,44 @@
+--- a/prefixconf.c
++++ b/prefixconf.c
+@@ -220,22 +220,29 @@ update_prefix(ia, pinfo, pifc, dhcpifp, 
+ 			}
+ 
+ 			if (spcreate) {
+-				// Set LAN side IP lifetimes to 1.
+-				snprintf(str, sizeof(str), "ifconfig %s |grep Global |awk '{print $3}' |xargs ip -6 addr change dev %s preferred_lft 1 valid_lft 1",
+-						pif->ifname, pif->ifname);
+-				system(str);
+-				sleep(1); // Waiting for this IP be expired.
+-
+ 				add_ifprefix(sp, pinfo, pif);
+ 			}
+ 
+-			// Set LAN side IP lifetimes from IA_PD (not include dhcpifp->ifname)
+-			snprintf(str, sizeof(str), "ifconfig %s |grep Global |awk '{print $3}' |head -1 |xargs ip -6 addr change dev %s preferred_lft %lu valid_lft %lu",
+-					pif->ifname, pif->ifname, pinfo->pltime, pinfo->vltime);
+-			system(str);
++			if (!spcreate && pinfo->pltime==0) {
++				// Set LAN side IP lifetimes to 1, to let old prefix expired.
++				snprintf(str, sizeof(str), "./etc/init.d/dhcp6c_set_lifetimes_on_lan %s %s %d %d"
++						,in6addr2str(&pinfo->addr, 0)
++						,pif->ifname
++						,1
++						,1
++						);system(str);
++				sleep(1); // Waiting for this IP be expired.
++			}else{
++				// Set LAN side IP lifetimes from IA_PD (not include dhcpifp->ifname)
++				snprintf(str, sizeof(str), "./etc/init.d/dhcp6c_set_lifetimes_on_lan %s %s %d %d"
++						,in6addr2str(&pinfo->addr, 0)
++						,pif->ifname
++						,pinfo->pltime
++						,pinfo->vltime
++						);system(str);
++			}
+ 
+-			// Need to pass real time information to radvd.
+-			rtnVal = 1;
++			rtnVal = 1; // Need to pass real time information to radvd.
+ 		}
+ 	}
+ 

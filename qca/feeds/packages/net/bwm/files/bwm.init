@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=99
+
+start() {
+	system_mode=$(uci get system.main.system_mode)
+	operation_role=$(uci get system.main.operation_role)
+	if [ "$system_mode" == "1" ]; then
+		wan_ifname=$(uci get network.wan.ifname)
+		bwm -i $wan_ifname -t 2 &
+	fi
+}
+
+stop() {
+	killall -9 bwm
+}

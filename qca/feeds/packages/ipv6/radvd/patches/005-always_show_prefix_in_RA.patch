@@ -1,0 +1,61 @@
+--- a/send.c	2014-07-31 02:36:18.991227027 -0700
++++ b/send.c	2014-07-31 02:35:41.107226983 -0700
+@@ -222,7 +222,7 @@
+ 
+ 	while(prefix)
+ 	{
+-		if( prefix->enabled && prefix->curr_preferredlft > 0 )
++		if( prefix->enabled )
+ 		{
+ 			struct nd_opt_prefix_info *pinfo;
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

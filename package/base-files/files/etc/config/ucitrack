@@ -1,0 +1,134 @@
+config network
+	option exec '/bin/sync'
+	option init network
+
+config wireless
+	option exec '/bin/sync'
+	option init wireless
+	list affects network
+
+config firewall
+	option exec '/bin/sync'
+	option init firewall
+	list affects upnpd
+
+config firewall6
+	option exec '/bin/sync'
+	option init 'firewall6'
+
+config olsr
+	option exec '/bin/sync'
+	option init olsrd
+
+config dhcp
+	option exec '/bin/sync'
+	option init dnsmasq
+
+config dropbear
+	option exec '/bin/sync'
+	option init dropbear
+	list affects 'upnpd'
+
+config telnet
+	option exec '/bin/sync'
+	option init 'telnet'
+	list affects 'upnpd'
+
+config lighttpd
+	option exec '/bin/sync'
+	option init lighttpd
+	list affects 'upnpd'
+
+config fstab
+	option exec '/bin/sync'
+	option init fstab
+
+config system
+	option exec '/bin/sync'
+	option init led
+	list affects luci_statistics
+
+config luci_splash
+	option exec '/bin/sync'
+	option init luci_splash
+
+config upnpd
+	option exec '/bin/sync'
+	option init miniupnpd
+
+config ntpclient
+	option exec '/bin/sync'
+	option init ntpclient
+
+config samba
+	option exec '/bin/sync'
+	option init samba
+
+config tinyproxy
+	option exec '/bin/sync'
+	option init tinyproxy
+
+config pptpd
+	option exec '/bin/sync'
+	option init pptpd
+
+config igmpproxy
+	option exec '/bin/sync'
+	option init 'igmpproxy'
+
+config qca-nss-ecm
+	option exec '/bin/sync'
+	option init 'qca-nss-ecm'
+
+config account
+	option exec '/bin/sync'
+	option init 'password'
+
+config radvd
+	option exec '/bin/sync'
+	option init 'radvd'
+
+config dhcp6c
+	option exec '/bin/sync'
+	option init 'dhcp6c'
+
+config wol
+	option exec '/bin/sync'
+	option init wol
+
+config nat
+	option exec '/bin/sync'
+	option init nat
+
+config portTrigger
+	option exec '/bin/sync'
+	option init portTrigger
+
+config openvpn_client
+	option exec '/bin/sync'
+	option init 'openvpn_client'
+
+config openvpn_server
+	option exec '/bin/sync'
+	option init 'openvpn_server'
+
+config proftpd
+	option exec '/bin/sync'
+	option init proftpd
+
+config dlna
+	option exec '/bin/sync'
+	option init dlna
+
+config updatedd
+	option exec '/bin/sync'
+	option init updatedd_init
+
+config parentalControl
+	option exec '/bin/sync'
+	option init parentalControl
+
+config block_event_listener
+	option exec '/bin/sync'
+	option init 'block_event_listener_init'
+

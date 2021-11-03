@@ -1,0 +1,148 @@
+#!/bin/sh /etc/rc.common
+USE_PROCD=1
+START=97
+CONFIGURATION="wireless_schedule5G" #uci config name
+PATH_CRONTAB_TMP="/tmp/wireless_scheduling5G_crontabs.tmp" #Path of temp crontab file
+SCRIPT="wireless_scheduling5G.sh"
+
+##defined time
+mins_per_hour=60
+schedule_min=15 #how much min every unit
+units_per_hour=$((mins_per_hour / schedule_min))
+
+last_unit="1" # for schedule unit
+
+##FOR NBG7815
+WIFI_DEV="wifi0"
+WIFI_IFACE="ath10"
+WIFI_SSID=$(uci get wireless.$WIFI_IFACE.ssid) # check install finish? (wireless)
+
+hex_to_binary() {
+  local ret
+  for hex in $(echo "$1" | grep -o .)
+  do
+    local dec
+    dec=$((0x$hex))
+    for i in $(seq 3 -1 0)
+    do
+      ret="$ret$(((dec>>i)&1))"
+    done
+  done
+  echo "$ret"
+}
+
+set_config() {
+  local day
+  case "$1" in
+    "mon") day="1" ;;
+    "tue") day="2" ;;
+    "wed") day="3" ;;
+    "thu") day="4" ;;
+    "fri") day="5" ;;
+    "sat") day="6" ;;
+    "sun") day="0" ;;
+  esac
+
+  local count
+  count=0
+  for unit in $(hex_to_binary "$(uci get "$CONFIGURATION"."$1".times | sed 's/,//g')" | grep -o .)
+  do
+    local hour
+    local minute
+    hour=$((count / units_per_hour))
+    minute=$((count % units_per_hour * schedule_min))
+    if [ "$unit" != "$last_unit" ]; then
+      last_unit="$unit"
+      if [ "$unit" = "0" ]; then
+        echo "$minute $hour * * $day /sbin/$SCRIPT down" >> "$PATH_CRONTAB_TMP"
+      else
+        echo "$minute $hour * * $day /sbin/$SCRIPT up" >> "$PATH_CRONTAB_TMP"
+      fi
+    fi
+    count=$((count + 1))
+  done
+}
+
+clean_crontabs_rule() {
+  cp /etc/crontabs/root "$PATH_CRONTAB_TMP"
+  sed -i -e "/$SCRIPT/d" "$PATH_CRONTAB_TMP"
+  mv "$PATH_CRONTAB_TMP" /etc/crontabs/root
+}
+
+check_time() {
+  local sys_day
+  local sys_hh
+  local sys_min
+  local target_index
+  local binary
+  local unit
+  local chk_iface
+  sys_day=$(date | awk '{print $1}' | tr A-Z a-z)
+  sys_hh=$(date | awk '{print $4}' | cut -f1 -d':' | sed -e s/^0//)  # 08 => 8, 09 => 9; avoid octal interpretation of such decimal numbers
+  sys_min=$(date | awk '{print $4}' | cut -f2 -d':' | sed -e s/^0//) # 08 => 8, 09 => 9; avoid octal interpretation of such decimal numbers
+  target_index=$((sys_hh * units_per_hour + sys_min / schedule_min + 1))
+  binary=$(hex_to_binary "$(uci get "$CONFIGURATION"."$sys_day".times | sed 's/,//g')")
+  unit=$(echo "$binary" | cut -c "$target_index")
+  chk_iface="$1"
+  if [ "$unit" = "1" ] && [ -n "$chk_iface" ]; then
+    /sbin/$SCRIPT up
+  elif [ "$unit" = "0" ] && [ -z "$chk_iface" ]; then
+    /sbin/$SCRIPT down
+  else
+    zlog 7 2 "$CONFIGURATION: unit=$unit, binary=$binary, target_index=$target_index" # error message for debug
+  fi
+}
+
+start_service() {
+  zlog 7 2 "wireless_scheduling(5G) start"
+  if [ -f /etc/crontabs/root ]; then
+    clean_crontabs_rule
+  fi
+
+  local status
+  local chk_iface
+  status=$(uci get $CONFIGURATION.schedule.enabled)
+  { [ -z "$(iwconfig $WIFI_IFACE 2> /dev/null)" ] || [ -n "$(iwconfig $WIFI_IFACE | grep "Not-Associated")" ]; } && chk_iface="Not-Associated"
+  if [ -z "$WIFI_SSID" ]; then
+    zlog 7 2 ***WIFI_SSID is empty***
+  elif [ "$status" = "disable" ]; then
+    zlog 7 2 "wireless_scheduling(5G) disable status"
+    if [ -n "$chk_iface" ]; then
+      echo "$WIFI_DEV" > /tmp/WirelessDev
+      /etc/init.d/wireless restart
+    fi
+    /etc/init.d/cron restart
+  else
+    check_time "$chk_iface"
+
+    ##set_config
+    zlog 7 2 "wireless_scheduling(5G) set_config"
+    config_load ${CONFIGURATION} #reload config for 'config_foreach'
+    cp /etc/crontabs/root "$PATH_CRONTAB_TMP"
+    config_foreach set_config day
+    mv "$PATH_CRONTAB_TMP" /etc/crontabs/root
+    /etc/init.d/cron restart
+  fi
+  zlog 7 2 "wireless_scheduling(5G) finish"
+}
+
+boot() {
+  if [ -f /etc/crontabs/root ]; then
+    clean_crontabs_rule
+  fi
+
+  local status
+  local chk_iface
+  status=$(uci get $CONFIGURATION.schedule.enabled)
+  { [ -z "$(iwconfig $WIFI_IFACE 2> /dev/null)" ] || [ -n "$(iwconfig $WIFI_IFACE | grep "Not-Associated")" ]; } && chk_iface="Not-Associated"
+  if [ "$status" = "enable" ]; then
+    check_time "$chk_iface"
+
+    ##set_config
+    config_load ${CONFIGURATION} #reload config for 'config_foreach'
+    cp /etc/crontabs/root "$PATH_CRONTAB_TMP"
+    config_foreach set_config day
+    mv "$PATH_CRONTAB_TMP" /etc/crontabs/root
+    /etc/init.d/cron restart
+  fi
+}

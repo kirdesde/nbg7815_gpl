@@ -1,0 +1,263 @@
+#!/bin/sh
+
+. /etc/functions.sh
+include /lib/config/
+
+configPATH=/etc/lighttpd/conf.d/port.conf
+PX5G_BIN="/usr/sbin/px5g"
+CERT_FILE=/etc/lighttpd/lighttpd.pem
+
+setConfig(){
+	http_port=$(uci_get lighttpd main listen_http)
+	https_port=$(uci get lighttpd.main.listen_https)
+
+	if [ "$http_port" == "" ]; then
+		http_port=80
+	fi
+
+	echo "server.port = $http_port" > $configPATH
+
+	if [ "$https_port" != "" ]; then
+		echo '$SERVER["socket"] == "'":$https_port"'" {' >> $configPATH
+		echo '	ssl.engine = "enable"' >> $configPATH
+		echo "	ssl.pemfile = \"$CERT_FILE\"" >> $configPATH
+		echo '}' >> $configPATH
+	fi
+
+#	chk_lan_ip
+	config_parental_routing
+	config_captiveportal
+	config_aishield
+}
+
+chk_lan_ip(){
+	local lan_ip=$(ifconfig br-lan | grep "inet addr" | awk -F'addr:' '{print $2}' | awk -F'Bcast' '{print $1}' | awk -F '.' '{print $1"."$2"."$3}')
+	#sed -e "s#|LANIP|#"$lan_ip.0/24"#g"\
+		#/etc/lighttpd/conf.d/photobak.conf.default > /etc/lighttpd/conf.d/photobak.conf
+
+	#sed -e "s#|LANIP|#"$lan_ip.0/24"#g"\
+		#/etc/lighttpd/conf.d/webdav.conf.default > /etc/lighttpd/conf.d/webdav.conf 
+	sed -e "s#|LANIP|#"$lan_ip.0/24"#g"\
+		/etc/lighttpd/conf.d/zapi.conf.default > /etc/lighttpd/conf.d/zapi.conf 
+}
+
+config_parental_routing(){
+	local sys_mode=$(get_sys_mode)
+	[ "$sys_mode" != 1 ] && return
+	
+	local parental_routing_enable=$(uci get parentalControl.general.enable)
+	local parental_http_port=$(uci get parentalControl.general.redirect_HTTP_port)
+	local lan_ip=$(uci get network.lan.ipaddr | awk -F '.' '{print $1"."$2"."$3"."$4}')
+	if [ -n "$parental_routing_enable" ] && [ "$parental_routing_enable" == "1" ] &&
+		[ -n "$parental_http_port" ] && [ "$parental_http_port" != "0" ] && [ "$parental_http_port" != "8008" ]; then
+		echo '$SERVER["socket"] == "'"$lan_ip:8008"'" {' >> $configPATH
+		echo '	setenv.add-response-header = (' >> $configPATH
+		echo '		"Cache-Control" => "no-store, no-cache, must-revalidate",' >> $configPATH
+		echo '		"Pragma" => "no-cache"' >> $configPATH
+		echo '	)' >> $configPATH
+		echo '	$HTTP["language"] =~ "(de|en|es|fr|it|zh)" {' >> $configPATH
+		echo '		url.redirect-code = 302' >> $configPATH
+		echo '		url.redirect = (".*" => "http://'$lan_ip:$parental_http_port'/%1/")' >> $configPATH
+		echo '	}' >> $configPATH
+		echo '}' >> $configPATH
+
+		echo '$SERVER["socket"] == "'"$lan_ip:$parental_http_port"'" {' >> $configPATH
+		echo '	setenv.add-response-header = (' >> $configPATH
+		echo '		"Cache-Control" => "no-store, no-cache, must-revalidate",' >> $configPATH
+		echo '		"Pragma" => "no-cache"' >> $configPATH
+		echo '	)' >> $configPATH
+		echo '	server.document-root = "/www/parental_blocked/"' >> $configPATH
+		#echo '	server.error-handler-404 = "index.html"' >> $configPATH
+		echo '}' >> $configPATH
+
+		local parental_https_port=$(uci get parentalControl.general.redirect_HTTPS_port)
+		[ -n "$parental_https_port" ] && [ "$parental_https_port" != "0" ] && {
+			echo '$SERVER["socket"] == "'"$lan_ip:$parental_https_port"'" {' >> $configPATH
+			echo '	ssl.engine = "enable"' >> $configPATH
+			echo "	ssl.pemfile = \"$CERT_FILE\"" >> $configPATH
+			echo '	setenv.add-response-header = (' >> $configPATH
+			echo '		"Cache-Control" => "no-store, no-cache, must-revalidate",' >> $configPATH
+			echo '		"Pragma" => "no-cache"' >> $configPATH
+			echo '	)' >> $configPATH
+			echo '	$HTTP["language"] =~ "(de|en|es|fr|it|zh)" {' >> $configPATH
+			echo '		url.redirect-code = 302' >> $configPATH
+			echo '		url.redirect = (".*" => "http://'$lan_ip:$parental_http_port'/%1/")' >> $configPATH
+			echo '	}' >> $configPATH
+			echo '}' >> $configPATH
+		}
+	fi
+}
+
+config_captiveportal(){
+
+	# This feature can only be enabled if it is WSQ60 or licensed WSQ50
+	# Start checking
+	local cap_enabled=$(wifisys_tool -g 1 -f 2)
+	[ -z "$cap_enabled" -o "$cap_enabled" == "0" ] && return
+	# End checking
+
+	local op_role=$(uci get system.main.operation_role)
+	[ "$op_role" != "controller" ] && return
+
+#	local captiveportal_enable=$(uci get captiveportal.general.enabled)
+	local lan_ip=$(ifconfig br-lan | grep "inet addr" | awk -F'addr:' '{print $2}' | awk -F'Bcast' '{print $1}' | awk -F '.' '{print $1"."$2"."$3}')
+	local captive_http_port=$(uci get captiveportal.general.redirect_HTTP_port)
+	local captive_lanip=$(uci get network.visitor.ipaddr | awk -F '.' '{print $1"."$2"."$3}')
+#	if [ -n "$captiveportal_enable" ] && [ "$captiveportal_enable" == "1" ] &&
+#	[ -n "$captive_http_port" ] && [ "$captive_http_port" != "0" ] && [ "$captive_http_port" != "8008" ]; then
+	if [ -n "$captive_http_port" ] && [ "$captive_http_port" != "0" ] && [ "$captive_http_port" != "8008" ]; then
+		echo '$SERVER["socket"] == "'"$captive_lanip.1:8008"'" {' >> $configPATH
+		echo '	setenv.add-response-header = (' >> $configPATH
+		echo '		"Cache-Control" => "no-store, no-cache, must-revalidate",' >> $configPATH
+		echo '		"Pragma" => "no-cache"' >> $configPATH
+		echo '	)' >> $configPATH
+		echo '	$HTTP["host"] =~ ".*" {' >> $configPATH
+		echo '		url.redirect-code = 302' >> $configPATH
+		echo '		url.redirect = (".*" => "http://'$captive_lanip.1:$captive_http_port'")' >> $configPATH
+		echo '	}' >> $configPATH
+		echo '}' >> $configPATH
+
+		echo '$SERVER["socket"] == "'"$captive_lanip.1:$captive_http_port"'" {' >> $configPATH
+		echo '	setenv.add-response-header = (' >> $configPATH
+		echo '		"Cache-Control" => "no-store, no-cache, must-revalidate",' >> $configPATH
+		echo '		"Pragma" => "no-cache"' >> $configPATH
+		echo '	)' >> $configPATH
+		echo '	server.document-root = "/www/captiveportal/"' >> $configPATH
+		#echo '	server.error-handler-404 = "/index.html"' >> $configPATH
+		echo '}' >> $configPATH
+
+		local captive_https_port=$(uci get captiveportal.general.redirect_HTTPS_port)
+		[ -n "$captive_https_port" ] && [ "$captive_https_port" != "0" ] && {
+			echo '$SERVER["socket"] == "'"$captive_lanip.1:$captive_https_port"'" {' >> $configPATH
+			echo '	ssl.engine = "enable"' >> $configPATH
+			echo "	ssl.pemfile = \"$CERT_FILE\"" >> $configPATH
+			echo '	setenv.add-response-header = (' >> $configPATH
+			echo '		"Cache-Control" => "no-store, no-cache, must-revalidate",' >> $configPATH
+			echo '		"Pragma" => "no-cache"' >> $configPATH
+			echo '	)' >> $configPATH
+			echo '	$HTTP["host"] =~ ".*" {' >> $configPATH
+			echo '		url.redirect-code = 302' >> $configPATH
+			echo '		url.redirect = (".*" => "http://'$captive_lanip.1:$captive_http_port'")' >> $configPATH
+			echo '	}' >> $configPATH
+			echo '}' >> $configPATH
+		}
+	fi
+	
+#	sed -e "s#|LANIP|#"$lan_ip.0/24"#g"\
+#	    -e "s#|CAPTIVEIP|#"$captive_lanip.0/24"#g"\
+#		/etc/lighttpd/conf.d/zapi.conf.default > /etc/lighttpd/conf.d/zapi.conf
+
+}
+
+config_aishield(){
+	local sys_mode=$(get_sys_mode)
+	[ "$sys_mode" != 1 ] && return
+	
+	echo '$SERVER["socket"] == "'":8088"'" {' >> $configPATH
+	echo '	setenv.add-response-header = (' >> $configPATH
+	echo '		"Cache-Control" => "no-store, no-cache, must-revalidate",' >> $configPATH
+	echo '		"Pragma" => "no-cache"' >> $configPATH
+	echo '	)' >> $configPATH
+	echo '	server.document-root = "/www/aishield_blocked/"' >> $configPATH
+	#echo '	server.error-handler-404 = "index.html"' >> $configPATH
+	echo '}' >> $configPATH
+	
+	proto=$(uci_get network wan proto)
+	if [ "$proto" == "pppoe" ] || [ "$proto" == "pptp" ];then
+		WAN="$proto"-wan
+	else
+		WAN=$(uci_get network wan ifname)
+	fi
+}
+
+generate_keys() {
+	[ -e "$CERT_FILE" ] && return
+
+	days=$(uci get lighttpd.px5g.days)
+	bits=$(uci get lighttpd.px5g.bits)
+	country=$(uci get lighttpd.px5g.country)
+	state=$(uci get lighttpd.px5g.state)
+	location=$(uci get lighttpd.px5g.location)
+	commonname=$(uci get lighttpd.px5g.commonname)
+
+	openssl req -new -nodes -sha256 -x509 -newkey rsa:${bits:-1024} -keyout $CERT_FILE -out $CERT_FILE -days ${days:-7300} \
+		-subj /C="${country:-DE}"/ST="${state:-Saxony}"/L="${location:-Leipzig}"/CN="${commonname:-OpenWrt}"
+
+#	[ -x "$PX5G_BIN" ] && {
+#		$PX5G_BIN selfsigned -der \
+#			-days ${days:-730} -newkey rsa:${bits:-1024} -keyout "/tmp/lighttpd.pem" -out "/tmp/lighttpd.pem" \
+#			-subj /C="${country:-DE}"/ST="${state:-Saxony}"/L="${location:-Leipzig}"/CN="${commonname:-OpenWrt}"
+#	}
+}
+
+chk_remote_management(){
+	pwd=$(uci get system.main.pwd)
+
+	# if [ "$pwd" == "1234" ]; then # default password
+	# 	uci set firewall.remote_www.interface="2"
+	# 	uci set firewall.remote_https.interface="2"
+	# 	uci commit firewall
+	# fi
+}
+
+lighttpd_init(){
+	chk_remote_management
+	config_load firewall
+	config_get remote_http remote_www port
+	http_port=$(uci_get lighttpd main listen_http)
+	
+	## lighttpd is reloaded if and only if listen port is changed
+	if [ -n "$remote_http" ] && [ $http_port -ne $remote_http ] ; then
+		uci set lighttpd.main.listen_http=$remote_http
+		uci commit lighttpd
+		sync #This command is for emmc and ext4 filesystem
+	fi
+	
+	config_get remote_https remote_https port
+	https_port=$(uci get lighttpd.main.listen_https)
+	## lighttpd is reloaded if and only if listen port is changed
+	if [ -n "$remote_https" ] && [ "$https_port" != "$remote_https" ] ; then
+		uci set lighttpd.main.listen_https=$remote_https
+		uci commit lighttpd
+		sync #This command is for emmc and ext4 filesystem
+	fi
+
+	##check mode,if AP/UR,exit
+	local sys_mode=$(get_sys_mode)
+	[ "$sys_mode" == "2" -o "$sys_mode" == "3" ] || {
+		
+		insmod x_tables  2>&- >&-
+		insmod ip_tables  2>&- >&-
+		insmod ip6_tables  2>&- >&-
+		insmod iptable_filter  2>&- >&-
+		insmod xt_tcpudp  2>&- >&-
+
+		/sbin/firewall_www start ##Trigger firewall for WWW.
+		local changeToSer=$(uci_get nat general changeToSer)
+		[ "$changeToSer" = "1" ] && /sbin/nat apply
+
+		#guest wireless LAN
+		#/lib/firewall/firewall_guest_wlan
+		#firewall_guest_wlan will delete some rules refer to INPUT_GuestLAN, remove INPUT_GuestLAN and append INPUT_GuestLAN in the end of INPUT. This will change the order of rules.
+		#firewall_guest_wlan will be executed in iptables_app_order. Order of rules will be the same.
+		/lib/firewall/iptables_app_order
+	}
+	setConfig
+	generate_keys
+}
+
+lighttpd_off(){
+	firewall_www stop
+}
+
+case $1 in
+	init)
+		lighttpd_init
+	;;
+	off)
+		lighttpd_off
+	;;
+	sysStart)
+		sysSTART
+	;;
+esac

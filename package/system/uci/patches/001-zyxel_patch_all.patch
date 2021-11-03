@@ -1,0 +1,265 @@
+--- aaa/file.c	2019-05-09 10:47:43.000000000 +0800
++++ bbb/file.c	2019-06-06 11:27:25.458427000 +0800
+@@ -916,6 +916,82 @@
+ 	return package;
+ }
+ 
++/* for auto-invoke backend when accessing UCI from anywhere other than LuCI, ZyXEL, John, 2012/08/05 */
++int ucitrack_get_configs(char *configName, char *configs)
++{
++	char line[128];
++	char *word = NULL, *config = NULL, *list = NULL;
++	int ret;
++	FILE *fp = NULL;
++	char *delim = " \t\n'";
++
++	if((fp = fopen(UCITRACK, "r")) == NULL){
++		DPRINTF("fail to open config file %s\n", UCITRACK);
++		return UCITRACK_PARSE_ERROR;
++	}
++
++	while (!feof(fp)){
++		memset(line, 0, sizeof(line));
++		fgets(line, sizeof(line), fp);
++		
++		word = strtok(line, delim);
++		if(word == NULL || word[0] != 'c'){
++			continue;
++		}
++		config = strtok(NULL, delim);
++
++		if (config && !strcmp(configName, config))
++		{
++			/* get config section name */
++			sprintf(configs + strlen(configs), "%s ", configName);
++			
++			/* get list */
++			while(!feof(fp)){
++				memset(line, 0, sizeof(line));
++				fgets(line, sizeof(line), fp);
++
++				word = strtok(line, delim);
++				if(word){
++					switch(word[0]) {
++						case 0:
++						case '#':
++						case 'c':
++							fclose(fp);
++							return UCITRACK_CONFIG_SECTION_END;
++						case 'o':
++							continue;
++						case 'l':
++
++							/* bypass affect */
++							if((list = strtok(NULL, delim)) == NULL){
++								fclose(fp);
++								return UCITRACK_PARSE_ERROR;
++							}
++
++							/* get list */
++							if((list = strtok(NULL, delim)) == NULL){
++								fclose(fp);
++								return UCITRACK_PARSE_ERROR;
++							}
++							
++							if(list && (ret = ucitrack_get_configs(list, configs)) == UCITRACK_PARSE_ERROR){
++								fclose(fp);
++								return ret;
++							}
++							break;
++						default:
++							break;
++					}
++				}
++			}
++			break;
++		}
++	}
++
++	fclose(fp);
++	return UCITRACK_PARSE_SUCCESS;
++}
++
+ __private UCI_BACKEND(uci_file_backend, "file",
+ 	.load = uci_file_load,
+ 	.commit = uci_file_commit,
+--- aaa/libuci.c	2019-05-09 10:47:43.000000000 +0800
++++ bbb/libuci.c	2019-06-06 11:27:25.458427000 +0800
+@@ -24,6 +24,7 @@
+ #include <stdio.h>
+ #include <dlfcn.h>
+ #include <glob.h>
++#include <unistd.h>
+ #include "uci.h"
+ 
+ static const char *uci_errstr[] = {
+@@ -232,3 +233,109 @@
+ 	ctx->backend = uci_to_backend(e);
+ 	return 0;
+ }
++
++/* for auto-invoke backend when accessing UCI from anywhere other than LuCI, ZyXEL, John, 2012/08/05 */
++int uci_config_loadback(struct uci_context *ctx, char *name){
++
++	char path[64];
++	FILE *f = NULL;
++
++	/* flush history file */
++	sprintf(path, "%s/%s", UCI_SAVEDIR, name);
++	f = uci_open_stream(ctx, path, NULL, SEEK_SET, true, false);
++	rewind(f);
++	if (ftruncate(fileno(f), 0) < 0) {
++		DPRINTF("fail to reset history file\n");
++	}
++	uci_close_stream(f);
++
++	/* reload package to ctx*/
++	if(name){
++		uci_load(ctx, name, NULL);
++	}
++
++	return 0;
++}
++int uci_apply(struct uci_context **ctx)
++{
++	struct uci_context *tmp_ctx = *ctx;
++	struct uci_context *new_ctx = NULL;
++	struct uci_element *e;
++	struct uci_package *p;
++	int ret = 0;
++
++	/* invoke backend */
++	uci_foreach_element(&tmp_ctx->root, e){
++		if(e->name){
++			p = uci_to_package(e);
++			if((ret = uci_invoke_backend(p)) != 0){
++				printf("fail to apply backend: %s ret=%d\n", p->e.name, ret);
++				break;
++			}
++		}
++	}
++
++	/* if there is error in this transaction apply */
++	if(ret){
++
++		/* prepare new context */
++		if((new_ctx = uci_alloc_context()) == NULL){
++			printf("fail to allocate context\n");
++			return ret;
++		}
++		/* flush history config and reload configured package */
++		uci_foreach_element(&tmp_ctx->root, e){
++			if(e->name){
++				uci_config_loadback(new_ctx, e->name);
++			}
++		}
++
++		/* free old context */
++		uci_free_context(tmp_ctx);
++		*ctx = new_ctx;
++		tmp_ctx = *ctx;
++
++		/* loadback old configuration by invoking each backend */
++		uci_foreach_element(&tmp_ctx->root, e){
++			if(e->name){
++				p = uci_to_package(e);
++				printf("start loadback configuration...\n");
++				if(uci_invoke_backend(p) != 0){
++					printf("loadback backend error\n");
++					break;
++				}
++			}
++		}
++	}
++	return ret;
++}
++int uci_invoke_backend(struct uci_package *package)
++{
++	struct uci_element *e = &package->e;
++	char cmd[256];
++	char configs[128];
++	int ret;
++
++	memset(configs, 0, sizeof(configs));
++	printf("invoke backend: %s\n", e->name);
++
++	if(ucitrack_get_configs(e->name, configs) == UCITRACK_PARSE_ERROR){
++		DPRINTF("fail to get backends from ucitrack\n");
++		return -1;
++	}
++
++	DPRINTF("%s %d: configs[%s]\n", __FUNCTION__, __LINE__, configs);
++
++	/* leverage LuCI reload script to invoke backend */
++	sprintf(cmd, "/sbin/luci-reload %s", configs);
++
++	ret = system(cmd);
++
++    if((ret>>8) != 0){
++        DPRINTF("fail to apply config %s, ret=%d\n", e->name, ret>>8);
++    }
++
++	DPRINTF("backend return %d\n", ret>>8);
++	return ret>>8;
++}
++
+--- aaa/list.c	2019-05-09 10:47:43.000000000 +0800
++++ bbb/list.c	2019-06-06 11:27:25.458427000 +0800
+@@ -430,10 +430,13 @@
+ 
+ complete:
+ 	ptr->flags |= UCI_LOOKUP_COMPLETE;
++	return UCI_OK;
+ abort:
++	ptr->flags |= UCI_LOOKUP_ERR_OPT;
+ 	return UCI_OK;
+ 
+ notfound:
++	ptr->flags |= UCI_LOOKUP_ERR_PACK;
+ 	UCI_THROW(ctx, UCI_ERR_NOTFOUND);
+ 	/* not a chance here */
+ 	return UCI_ERR_NOTFOUND;
+--- aaa/uci.h	2019-05-09 10:47:43.000000000 +0800
++++ bbb/uci.h	2019-06-06 11:27:25.458427000 +0800
+@@ -40,6 +40,14 @@
+ #define UCI_DIRMODE 0700
+ #define UCI_FILEMODE 0600
+ 
++/* for auto-invoke backend when accessing UCI from anywhere other than LuCI, ZyXEL, John, 2012/08/05 */
++#define UCITRACK "/etc/config/ucitrack"
++#define UCITRACK_SECTION_NAME_PREFIX "cfg"
++
++#define UCITRACK_CONFIG_SECTION_END 1
++#define UCITRACK_PARSE_ERROR -1
++#define UCITRACK_PARSE_SUCCESS 0
++
+ enum
+ {
+ 	UCI_OK = 0,
+@@ -310,6 +318,16 @@
+  */
+ extern bool uci_validate_text(const char *str);
+ 
++/* Get changed data at commit time for trigger ZCFG command */
++void uci_changed_get_zy(struct uci_context *ctx, struct uci_package *p);
++
++/* for auto-invoke backend when accessing UCI from anywhere other than LuCI, John, 2012/08/05 */
++extern int uci_config_loadback(struct uci_context *ctx, char *name);
++extern int uci_invoke_backend(struct uci_package *package);
++extern int uci_apply(struct uci_context **ctx);
++
++int ucitrack_get_configs(char *configName, char *configs);
++
+ /**
+  * uci_parse_ptr: parse a uci string into a uci_ptr
+  * @ctx: uci context
+@@ -490,6 +508,9 @@
+ 		UCI_LOOKUP_DONE =     (1 << 0),
+ 		UCI_LOOKUP_COMPLETE = (1 << 1),
+ 		UCI_LOOKUP_EXTENDED = (1 << 2),
++		UCI_LOOKUP_ERR_PACK = (1 << 3),
++		UCI_LOOKUP_ERR_OPT  = (1 << 4),
++
+ 	} flags;
+ 
+ 	struct uci_package *p;

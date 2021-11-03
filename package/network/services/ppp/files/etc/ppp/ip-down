@@ -1,0 +1,30 @@
+#!/bin/sh
+. /etc/functions.sh
+include /lib/config
+
+PPP_IFACE="$1"
+PPP_TTY="$2"
+PPP_SPEED="$3"
+PPP_LOCAL="$4"
+PPP_REMOTE="$5"
+PPP_IPPARAM="$(echo $6 | sed 's/\./_/g')"
+export PPP_IFACE PPP_TTY PPP_SPEED PPP_LOCAL PPP_REMOTE PPP_IPPARAM
+
+##check pptp vpn rule could be killed
+/usr/sbin/ip rule del dev br-lan table vpn 2>/dev/null
+
+[ -z "$PPP_IPPARAM" ] || {
+	env -i ACTION="ifdown" INTERFACE="$PPP_IPPARAM" DEVICE="$PPP_IFACE" PROTO=ppp /sbin/hotplug-call "iface"
+
+	# remove the interface's network state
+	uci_revert_state network "$PPP_IPPARAM"
+}
+
+[ -d /etc/ppp/ip-down.d ] && {
+	for SCRIPT in /etc/ppp/ip-down.d/*
+	do
+		[ -x "$SCRIPT" ] && "$SCRIPT" "$@"
+	done
+}
+
+	echo "pppd call 3g stop" >/tmp/3g_stop

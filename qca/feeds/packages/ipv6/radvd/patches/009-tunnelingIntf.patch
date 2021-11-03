@@ -1,0 +1,89 @@
+--- a/send.c
++++ b/send.c
+@@ -17,6 +17,12 @@
+ #include "config.h"
+ #include "includes.h"
+ #include "radvd.h"
++#include <sys/ioctl.h>
++#include <sys/socket.h>
++#include <net/if.h>
++#include <unistd.h>
++#include <linux/ethtool.h>
++#include <linux/sockios.h>
+ 
+ g_NeedSetRaltToZero=0;
+ g_HasSetRaltToZero=0;
+@@ -83,6 +89,32 @@
+ 	return 0;
+ }
+ 
++int check_tunnel_interface(char * ifName){
++	int  socketFd;
++	struct ifreq intf;
++	int intfaceUp = 0;
++
++	if (ifName == NULL) {
++		return intfaceUp;
++	}
++
++	if ((socketFd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
++		return intfaceUp;
++	}
++	else {
++		strcpy(intf.ifr_name, ifName);
++
++		if (ioctl(socketFd, SIOCGIFFLAGS, &intf) != -1) {
++			if (intf.ifr_flags & IFF_UP)
++				intfaceUp = 1;
++		}
++		close(socketFd);		
++	}
++
++	return intfaceUp;
++
++}
++
+ int check_wan_ip_empty(void)
+ {
+ 	system("uci get network.general.wan6rd_enable > /tmp/wan6rd_enable");
+@@ -142,9 +174,38 @@
+ 	fclose(fp_ifname);
+ 
+ 	char m_msg[100] = "";
++
+ 	if ( (strstr(m_6rdenable, "1") != NULL) || (strstr(m_6to4enable, "1") != NULL) || (strstr(m_6in4enable, "1") != NULL) || (strstr(m_ULAenable, "1") != NULL) ) {
+-		return 0; // don't care 6rd, for now.
+-		snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep 'inet ' |awk '{print $2}' > /tmp/wanip\n", m_ifname); // 6rd is ENABLED/6to4 is ENABLED/6in4 is ENABLED/ULA is ENABLED
++
++		int infStatus = 0;
++		if (strstr(m_6rdenable, "1")){
++			if (check_tunnel_interface("6rd-wan6rd"))
++				infStatus = 1;			
++#if 0		/*support 6rd now */
++		} else if (strstr(m_6to4enable, "1")) {
++			if (check_tunnel_interface("6to4-wan6to4"))
++				infStatus = 1;			
++		} else if (strstr(m_6in4enable, "1")) {
++			if (check_tunnel_interface("6in4-wan6in4"))
++				infStatus = 1;	
++#endif
++		} else {
++			infStatus = 1;	
++		}
++		/*workaround : attempting to reread config file, only for tunneling feature*/
++		g_NeedSetRaltToZero=0;
++		g_HasSetRaltToZero=0;
++
++		if( infStatus ){
++//			syslog(LOG_USER|LOG_DEBUG, "Tunneling Interface Up");
++			return 0; // wanip EXIST.
++		}else{
++//			syslog(LOG_USER|LOG_DEBUG, "Tunneling Interface Down");
++			return 1; // wanip EMPTY.
++		}
++			
++
++		//snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep 'inet ' |awk '{print $2}' > /tmp/wanip\n", m_ifname); // 6rd is ENABLED/6to4 is ENABLED/6in4 is ENABLED/ULA is ENABLED
+ 	} else {
+ 		snprintf(m_msg, sizeof(m_msg), "ifconfig %s |grep Global |awk '{print $3}' > /tmp/wanip\n", m_ifname);
+ 	}

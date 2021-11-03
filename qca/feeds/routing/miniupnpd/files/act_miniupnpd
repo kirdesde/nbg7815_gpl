@@ -1,0 +1,83 @@
+#!/bin/sh
+# Copyright (C) 2006 OpenWrt.org
+
+. /etc/functions.sh
+
+upnpd_netmask2prefix() {
+	local octet
+	local prefix=0
+	local IFS="."
+
+	set -- $1
+
+	for octet in $1 $2 $3 $4; do
+		while [ $octet -gt 0 ]; do
+			prefix=$(($prefix + ($octet & 1)))
+			octet=$(($octet >> 1))
+		done
+	done
+
+	return $prefix
+}
+
+tmpconf="/tmp/miniupnpd.conf"
+
+include /lib/config
+include /lib/network
+
+scan_interfaces
+config_get ifname wan ifname
+config_get lan_ifname lan ifname
+config_get ipaddr lan ipaddr
+config_get netmask lan netmask
+
+[ -z "$ifname" ] && ifname="$lan_ifname"
+ 
+config_load "upnpd"
+config_get upload config upload
+config_get download config download
+config_get logging config log_output
+ftp_port=$(uci get proftpd.global.port)
+www_port=$(uci get firewall.remote_www.port)
+telnet_port=$(uci get firewall.remote_telnet.port)
+https_port=$(uci get firewall.remote_https.port)
+ssh_port=$(uci get firewall.remote_ssh.port)
+
+echo "ext_ifname=$ifname" >$tmpconf
+#[ -n "$ipaddr" ] && {
+#	upnpd_netmask2prefix "$netmask"
+#	echo "listening_ip=$ipaddr/$?" >>$tmpconf
+#}
+echo "listening_ip=br-lan" >>$tmpconf
+echo "port=5000" >>$tmpconf
+echo "enable_natpmp=yes" >>$tmpconf
+echo "enable_upnp=yes" >>$tmpconf
+echo "secure_mode=no" >>$tmpconf
+echo "system_uptime=yes" >>$tmpconf
+[ -n "$upload" -a -n "$download" ] && {
+	echo "bitrate_down=$(($download * 1024 * 1000))" >>$tmpconf
+	echo "bitrate_up=$(($upload * 1024 * 1000))" >>$tmpconf
+}
+uuid="$(cat /proc/sys/kernel/random/uuid | cut -c 1-24)"
+MAC="$(ifconfig br-lan | grep HWaddr|awk -F ' ' '{print $5}'|sed 's/://g' | tr A-Z a-z)"
+echo "uuid=$uuid$MAC" >>$tmpconf
+
+#serial_num=$(cat /tmp/Serial_num)
+echo "serial=N/A" >>$tmpconf
+
+#echo "allow 1024-65535 0.0.0.0/0 1024-65535" >>$tmpconf
+echo "deny $ftp_port 0.0.0.0/0 0-65535" >>$tmpconf
+echo "deny $www_port 0.0.0.0/0 0-65535" >>$tmpconf
+echo "deny $telnet_port 0.0.0.0/0 0-65535" >>$tmpconf
+echo "deny $https_port 0.0.0.0/0 0-65535" >>$tmpconf
+echo "deny $ssh_port 0.0.0.0/0 0-65535" >>$tmpconf
+
+if [ -n "$ifname" ]; then
+	if [ "$logging" = "1" ]; then
+		/usr/sbin/miniupnpd -f /tmp/miniupnpd.conf -d
+	else
+		/usr/sbin/miniupnpd -f /tmp/miniupnpd.conf
+	fi
+else
+	logger -t "upnp daemon" "external interface not found, not starting"
+fi

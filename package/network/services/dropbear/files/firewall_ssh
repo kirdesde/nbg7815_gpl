@@ -1,0 +1,87 @@
+#!/bin/sh /etc/rc.common
+
+filter() {
+	config_load firewall
+	config_get ssh_port remote_ssh port
+	config_get ssh_inf remote_ssh interface
+	config_get ssh_client_check remote_ssh client_check
+	config_get ssh_client_addr remote_ssh client_addr
+
+	if [ "on" = "$1" ]; then
+		filter_type=" -I "
+	else
+		filter_type=" -D "
+	fi
+
+#	/usr/sbin/iptables -t filter $filter_type INPUT -p tcp --dport ${ssh_port:-21} -j ACCEPT
+
+		inf_cmd=""
+		
+		## insert DROP rule first 
+		case $ssh_inf in
+			0)
+			#disable
+			if [ "$ssh_client_check" = "0" ]; then
+				exit 0
+			fi
+			;;
+			2)
+			#lan
+			if [ "$ssh_client_check" = "0" ]; then
+				inf_cmd=" ! -i br-lan "
+			fi
+			;;
+			3)
+			#wan
+			if [ "$ssh_client_check" = "0" ]; then
+				inf_cmd=" -i br-lan "
+			fi
+			;;
+		esac
+		
+		if [ $ssh_inf -ne 1 -o $ssh_client_check -ne 0 ]; then
+			/usr/sbin/iptables -t filter $filter_type RMMG_SSH_INPUT $inf_cmd -p tcp --dport ${ssh_port:-21} -j DROP 2> /dev/null
+			/usr/sbin/ip6tables -t filter $filter_type RMMG_SSH_INPUT $inf_cmd -p tcp --dport ${ssh_port:-21} -j DROP 2> /dev/null
+		fi
+		case $ssh_inf in
+			1)
+			# lan and wan
+			inf_cmd=""
+			;;
+			2)
+			#lan
+			inf_cmd=" -i br-lan "
+			;;
+			3)
+			#wan
+			#lan
+			inf_cmd=" ! -i br-lan "
+			;;
+		esac
+
+
+		if [ "$ssh_client_check" = "0" ]; then
+			addr_cmd=""
+		else
+			addr_cmd=" -s $ssh_client_addr "
+		fi
+
+		/usr/sbin/iptables -t filter $filter_type RMMG_SSH_INPUT $inf_cmd $addr_cmd -p tcp --dport ${ssh_port:-21} -j ACCEPT 2> /dev/null
+		/usr/sbin/ip6tables -t filter $filter_type RMMG_SSH_INPUT $inf_cmd -p tcp --dport ${ssh_port:-21} -j ACCEPT 2> /dev/null
+}
+
+start () {
+	/usr/sbin/iptables -F RMMG_SSH_INPUT
+	/usr/sbin/iptables -X RMMG_SSH_INPUT
+	/usr/sbin/iptables -N RMMG_SSH_INPUT
+	/usr/sbin/ip6tables -F RMMG_SSH_INPUT
+	/usr/sbin/ip6tables -X RMMG_SSH_INPUT
+	/usr/sbin/ip6tables -N RMMG_SSH_INPUT
+
+	filter "on"
+}
+
+stop() {
+	filter "off"
+}
+

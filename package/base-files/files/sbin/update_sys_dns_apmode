@@ -1,0 +1,106 @@
+#!/bin/sh
+# Copyright (C) 2006 OpenWrt.org
+
+. /etc/functions.sh
+include /lib/network
+
+config_load network
+config_get proto lan proto
+
+sys_dns1=""
+sys_dns2=""
+sys_dns3=""
+
+if [ $proto != "static" ]; then
+
+	## read dns server from /tmp/resolv.conf.auto, which are obtained from ISP
+	count=1
+	while read line
+	do
+		express=$(echo $line | grep "nameserver")
+		#echo "$line"
+		if [ "$express" != "" ]; then
+			if [ "$count" == "1" ]; then
+				sys_dns1=$(echo $express | awk -F" " '{print $2}')
+			fi
+			
+			if [ "$count" == "2" ]; then
+				sys_dns2=$(echo $express | awk -F" " '{print $2}')
+			fi
+			
+			if [ "$count" == "3" ]; then
+				sys_dns3=$(echo $express | awk -F" " '{print $2}')
+			fi
+			count=$(($count+1))
+		fi
+		
+	done < /tmp/resolv.conf.auto
+fi
+
+## remove old /tmp/resolv.conf.auto and lock dns check
+rm /tmp/resolv.conf.auto
+
+touch /tmp/resolv.conf.auto
+echo "1" > /var/update_dns_lock
+
+## read user config of DNS server
+usr_dns1=""
+usr_dns2=""
+usr_dns3=""
+
+config_get dns1 lan dns1
+usr_dns1=${dns1#*,}
+dns_type1=${dns1%%,*}
+config_get dns2 lan dns2
+usr_dns2=${dns2#*,}
+dns_type2=${dns2%%,*}
+config_get dns3 lan dns3
+usr_dns3=${dns3#*,}
+dns_type3=${dns3%%,*}
+ 
+## reload /tmp/resolv.conf.auto
+
+i=1
+for dns_type in $dns_type1 $dns_type2 $dns_type3
+do
+	if [ "$dns_type" == "ISP" ]; then
+		if [ "$sys_dns1" != "" ]; then
+			echo "nameserver $sys_dns1" >> /tmp/resolv.conf.auto
+			sys_dns1=""
+		elif [ "$sys_dns2" != "" ]; then
+			echo "nameserver $sys_dns2" >> /tmp/resolv.conf.auto
+			sys_dns2=""
+		elif [ "$sys_dns3" != "" ]; then
+			echo "nameserver $sys_dns3" >> /tmp/resolv.conf.auto
+			sys_dns3=""
+		else
+			echo "no more available dns servers !"
+		fi
+	elif [ "$dns_type" == "USER" ]; then
+		if [ "$i" == "1" ]; then
+			if [ "$usr_dns1" != "" ]; then
+				echo "nameserver $usr_dns1" >> /tmp/resolv.conf.auto
+			fi
+		elif [ "$i" == "2" ]; then
+			if [ "$usr_dns2" != "" ]; then
+				echo "nameserver $usr_dns2" >> /tmp/resolv.conf.auto
+			fi
+		else
+			if [ "$usr_dns3" != "" ]; then
+				echo "nameserver $usr_dns3" >> /tmp/resolv.conf.auto
+			fi
+		fi
+	else
+		echo "dns type is NONE, don't do anything"
+	fi
+	
+	i=$(($i+1))
+done
+
+chmod 755 /tmp/resolv.conf.auto
+
+## update (unlock) success notification
+echo "0" > /var/update_dns_lock
+
+
+

@@ -1,0 +1,32 @@
+config system main
+	option release_year "2019"
+	option product_name "NBG7815"
+	option product_type_name "Armor G5"
+	option product_model "DUAL_BAND"
+	option hostname	"NBG7815"
+	option pwd "nbg7815@2019"
+	option gui_pwd "1234"
+	option language "en"
+	option systimeout "300"
+	option timezone "UTC"
+	option log_size	64
+	option fw_upgrade_time "420"
+	option gui_restart_time "140"
+	option operation_role "controller"
+	option install_mode "0"
+	option system_mode "1"    # 1:Router mode, 2:AP Bridge mode
+	option eaZy123 "0"
+	option auto_language "0"
+	option changeDefaultCg "1"
+
+config ble ble
+        option enabled 1
+
+config keystore keystore
+        option certificate_tag "00000000-0000-0000-0000-000000000000"
+        option path "/dev/mtd19"
+
+config LED led
+	option on '1'
+	option level '0'
+	option notify_period '180'

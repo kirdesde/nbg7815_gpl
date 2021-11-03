@@ -1,0 +1,35 @@
+#!/bin/sh 
+# Copyright (C) 2009 OpenWrt.org
+
+. /bin/define-usb-slot "$DEVPATH"
+
+# sanity check
+
+is_usb_storage=$(echo $DEVPATH | grep block | grep usb)
+
+# only take care of usb storage
+if [ "$is_usb_storage" == "" ]; then
+	exit
+fi
+
+dev_node=`basename $DEVPATH`
+
+# skip sd[a-z] if there is a partition table in the usb storage 
+if [ "$(echo $DEVPATH | awk -F"/" '{print $(NF-1)}')" == "block" ]; then
+	if fdisk -l "/dev/$dev_node" | grep -q "^/dev/${dev_node}[0-9]"; then
+		exit
+	fi
+fi
+
+case "$ACTION" in
+	add)	
+		#/bin/usb-app "start"
+
+	;;
+	remove)	
+		if df | grep "${USB_SLOT}_${USB_NODE}"; then
+			/bin/usb-app "stop"
+		fi
+	;;
+esac	
+

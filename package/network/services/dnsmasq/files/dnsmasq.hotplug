@@ -1,0 +1,10 @@
+#!/bin/sh
+
+sys_mode=$(get_sys_mode)
+
+if [ "$sys_mode" = "1" ] && { { [ "$ACTION" = "ifup" ] && [ "$INTERFACE" = "wan" ]; } || { [ "$ACTION" = "ifup" ] && [ "$INTERFACE" = "lan" ]; }; }; then
+	/etc/init.d/dnsmasq restart
+	/bin/switch_port lan reset
+	/bin/dnsmasq_guest_lan "RESTART"
+	zyxel_set_hosts
+fi

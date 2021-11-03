@@ -1,0 +1,87 @@
+#!/bin/sh
+. /etc/functions.sh
+include /lib/upgrade
+
+/sbin/zyxel_led_ctrl FWupgrade &
+
+RESULT_FILE=/tmp/logfile
+FWUPGRADE_FILE=/tmp/FWupgrade_state
+CHECK=0
+
+FILE=$1
+
+/usr/sbin/FWupgradelog.sh "[FW_upgrade] FILE=$1"
+echo "0" > $FWUPGRADE_FILE
+echo "Run FW upgrade... ... " > /dev/console
+
+if [ ! -f $FILE ]; then
+	/usr/sbin/FWupgradelog.sh "[FW_upgrade] FILE=$1 not exist"
+	echo "$FILE not exist" > /dev/console
+	echo "5" > $FWUPGRADE_FILE
+	#/sbin/zyxel_led_ctrl Error &
+	/sbin/zyxel_led_ctrl BootFinish &
+	exit
+fi
+
+######## kill
+#killall watch && /bin/SB_stop_ck &
+#etc/init.d/streamboost stop
+echo 3 > /proc/sys/vm/drop_caches && sleep 1
+#cp /sbin/reboot /tmp
+
+######## Run FW upgrade
+echo "Start to run fw_upgrade & wait 3 sec" > /dev/console
+fw_upgrade fw_check $FILE 1> $RESULT_FILE 2> /dev/null
+sleep 3
+
+if [ -f $RESULT_FILE ]; then
+	echo "search file=$RESULT_FILE" > /dev/console
+	while [ "$CHECK" -eq "0" ]
+	do
+		Result=`cat $RESULT_FILE | grep "Upgrade check success"`
+		echo "Success Result = $Result" > /dev/console
+		if [ "$Result" != "" ]; then
+			/usr/sbin/FWupgradelog.sh "[FW_upgrade] Success Result = $Result"
+			CHECK=1
+
+			echo 1 > /proc/sys/vm/drop_caches
+			echo 'Firmware upgrading, Please wait !' > /dev/console
+			echo "Run fw_upgrade exec_mtd" > /dev/console
+			fw_upgrade exec_mtd
+
+			echo "1" > $FWUPGRADE_FILE
+
+			#rm file flag after fwupgrade
+			rm -f /etc/FWupgradeTool/APPNotification_Flag
+
+			# rm file after upgrade to merge cyber-security config when preboot
+			#rm -f /etc/FWupgradeTool/merge_cyber_security_flag
+
+			/usr/sbin/FWupgradelog.sh "[FW_upgrade] FWupgrade success"
+
+			exit
+		fi
+
+		Result=`cat $RESULT_FILE | grep "Wrong firmware image header"`
+		echo "Wrong Result = $Result" > /dev/console
+		if [ "$Result" != "" ]; then
+			/usr/sbin/FWupgradelog.sh "[FW_upgrade] Wrong Result = $Result"
+			echo "FW upgrade error" > /dev/console
+			echo "5" > $FWUPGRADE_FILE
+			#/sbin/zyxel_led_ctrl Error &
+			/sbin/zyxel_led_ctrl BootFinish &
+			exit
+		fi
+
+		sleep 1
+	done
+else
+	/usr/sbin/FWupgradelog.sh "[FW_upgrade] FW upgrade error"
+	echo "FW upgrade error" > /dev/console
+	echo "5" > $FWUPGRADE_FILE
+	#/sbin/zyxel_led_ctrl Error &
+	/sbin/zyxel_led_ctrl BootFinish &
+	sleep 3
+fi
+
+exit

@@ -1,0 +1,100 @@
+#!/bin/sh /etc/rc.common
+
+START=03
+
+ck_ChangeDefaultCg()
+{
+	#SSH
+	ck_ssh_remote=$(uci get firewall.remote_ssh.interface)
+	if [ "$ck_ssh_remote" != "0" ]; then
+		uci set firewall.remote_ssh.interface=0
+		uci set firewall.remote_ssh.client_check=0
+		uci set firewall.remote_ssh.port=22
+		uci commit firewall
+	fi
+
+	#dropbear
+	ck_dropbear=$(uci get dropbear.setting.enable)
+	if [ "$ck_dropbear" != "0" ]; then
+		uci set dropbear.setting.enable=0
+		uci commit dropbear
+	fi
+	
+	ckNowChangeDefaultCg=$(uci get system.main.changeDefaultCg)
+
+	##For changeDefaultCg=1
+	##For NBG7815. In US set 5G default channel at 157. In EU set 5G default channel at 100.
+	if [ -z "$ckNowChangeDefaultCg" ];then
+		countrycode=$(fw_printenv countrycode | awk -F"=" '{print $2}' | tr [a-f] [A-F])
+		case "$countrycode" in
+			e1|E1) country="CH" 
+				uci set wireless.wifi0.AutoChannelSelect=0
+				uci set wireless.wifi0.channel=100
+			;;
+			*) 			
+				uci set wireless.wifi0.AutoChannelSelect=0
+				uci set wireless.wifi0.channel=157
+			;;
+		esac
+		uci set wireless.wifi0.channel_width=80
+		uci set wireless.ath0.he_ul_ofdma=0
+		uci set wireless.ath0.he_dl_ofdma=0
+		uci set wireless.ath0.he_ul_mimo=0
+		uci set wireless.ath0.he_mubfer=0
+		uci set wireless.ath0.disablecoext=0
+		uci set wireless.ath0.vhtsubfer=1
+		uci set wireless.ath1.he_ul_ofdma=0
+		uci set wireless.ath1.he_dl_ofdma=0
+		uci set wireless.ath1.he_ul_mimo=0
+		uci set wireless.ath1.he_mubfer=0
+		uci set wireless.ath1.disablecoext=0
+		uci set wireless.ath1.vhtsubfer=1
+		uci set wireless.ath2.he_ul_ofdma=0
+		uci set wireless.ath2.he_dl_ofdma=0
+		uci set wireless.ath2.he_ul_mimo=0
+		uci set wireless.ath2.he_mubfer=0
+		uci set wireless.ath2.disablecoext=0
+		uci set wireless.ath2.vhtsubfer=1
+		uci set wireless.ath3.he_ul_ofdma=0
+		uci set wireless.ath3.he_dl_ofdma=0
+		uci set wireless.ath3.he_ul_mimo=0
+		uci set wireless.ath3.he_mubfer=0
+		uci set wireless.ath3.disablecoext=0
+		uci set wireless.ath10.he_ul_ofdma=0
+		uci set wireless.ath10.he_dl_ofdma=0
+		uci set wireless.ath10.he_ul_mimo=0
+		uci set wireless.ath10.he_mubfer=0
+		uci set wireless.ath10.vhtsubfer=1
+		uci set wireless.ath11.he_ul_ofdma=0
+		uci set wireless.ath11.he_dl_ofdma=0
+		uci set wireless.ath11.he_ul_mimo=0
+		uci set wireless.ath11.he_mubfer=0
+		uci set wireless.ath11.vhtsubfer=1
+		uci set wireless.ath12.he_ul_ofdma=0
+		uci set wireless.ath12.he_dl_ofdma=0
+		uci set wireless.ath12.he_ul_mimo=0
+		uci set wireless.ath12.he_mubfer=0
+		uci set wireless.ath12.vhtsubfer=1
+		uci set wireless.ath13.he_ul_ofdma=0
+		uci set wireless.ath13.he_dl_ofdma=0
+		uci set wireless.ath13.he_ul_mimo=0
+		uci set wireless.ath13.he_mubfer=0
+		uci commit wireless
+		
+		uci set dhcp.lan.limit=200
+		uci commit dhcp
+
+		uci set system.main.changeDefaultCg=1
+		uci commit system
+		# This command is for emmc and ext4 filesystem
+		/bin/sync
+	fi
+}
+
+boot()
+{
+	local product_name=$(uci get system.main.product_name)
+
+	##Check ChangeDefaultCg
+	ck_ChangeDefaultCg
+}

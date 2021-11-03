@@ -1,0 +1,75 @@
+--- aaa/includes.h	2011-10-06 18:52:20.000000000 +0800
++++ bbb/includes.h	2019-07-02 08:36:31.142953000 +0800
+@@ -73,7 +73,9 @@
+ 
+ #include <arpa/inet.h>
+ 
++#ifdef HAVE_SYS_SYSCTL_H
+ #include <sys/sysctl.h>
++#endif
+ 
+ #include <net/if.h>
+ 
+--- aaa/radvd.c	2019-07-02 09:15:36.708428000 +0800
++++ bbb/radvd.c	2019-07-02 09:12:13.941705000 +0800
+@@ -831,7 +831,9 @@
+ int
+ check_ip6_forwarding(void)
+ {
++#ifdef HAVE_SYS_SYSCTL_H
+ 	int forw_sysctl[] = { SYSCTL_IP6_FORWARDING };
++#endif	
+ 	int value;
+ 	size_t size = sizeof(value);
+ 	FILE *fp = NULL;
+@@ -853,12 +855,14 @@
+ 	                        "or the kernel interface has changed?");
+ #endif /* __linux__ */
+ 
++#ifdef HAVE_SYS_SYSCTL_H
+ 	if (!fp && sysctl(forw_sysctl, sizeof(forw_sysctl)/sizeof(forw_sysctl[0]),
+ 	    &value, &size, NULL, 0) < 0) {
+ 		flog(LOG_DEBUG, "Correct IPv6 forwarding sysctl branch not found, "
+ 			"perhaps the kernel interface has changed?");
+ 		return(0);	/* this is of advisory value only */
+ 	}
++#endif
+ 
+ 	if (value != 1 && !warned) {
+ 		warned = 1;
+@@ -996,7 +1000,7 @@
+ 				// write into prefix
+ 				int i=0;
+ 				for(;i<16;i++){
+-					prefix->Prefix.__in6_u.__u6_addr8[i] = buffer[i];
++					prefix->Prefix.__in6_union.__s6_addr[i] = buffer[i];
+ 				}
+ 				free(buffer);
+ 				fclose(pFile);
+@@ -1042,7 +1046,7 @@
+ 				// write into prefix
+ 				int i=0;
+ 				for(;i<16;i++){
+-					prefix->Prefix.__in6_u.__u6_addr8[i] = buffer[i];
++					prefix->Prefix.__in6_union.__s6_addr[i] = buffer[i];
+ 				}
+ 				free(buffer);
+ 				fclose(pFile);
+@@ -1070,7 +1074,7 @@
+             unsigned char buff[16];
+             int i=0;
+             for(;i<16;i++){
+-                buff[i] = prefix->Prefix.__in6_u.__u6_addr8[i];
++                buff[i] = prefix->Prefix.__in6_union.__s6_addr[i];
+             }
+             FILE* fp = NULL;
+             fp = fopen("/tmp/radvd_oldprefix", "wb");
+@@ -1105,7 +1109,7 @@
+             unsigned char buff[16];
+             int i=0;
+             for(;i<16;i++){
+-                buff[i] = prefix->Prefix.__in6_u.__u6_addr8[i];
++                buff[i] = prefix->Prefix.__in6_union.__s6_addr[i];
+             }
+             FILE* fp = NULL;
+             fp = fopen("/tmp/radvd_newprefix", "wb");
